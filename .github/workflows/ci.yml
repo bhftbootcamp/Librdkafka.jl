@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    tags-ignore: ['**']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    name: Detect relevant changes
+    runs-on: ubuntu-24.04
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            relevant:
+              - 'deps/**'
+              - 'src/**'
+              - 'test/**'
+
+  build_test:
+    name: Build and test (matrix)
+    needs: changes
+    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 60
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        julia: ['1.10', '1.11', '1.12']
+        platform:
+          - os: ubuntu-24.04
+            arch: x64
+            platform: linux-x86_64
+            lib_ext: so
+          - os: macos-15
+            arch: arm64
+            platform: macos-aarch64
+            lib_ext: dylib
+          # - os: macos-15-intel
+          #   arch: x64
+          #   platform: macos-x86_64
+          #   lib_ext: dylib
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and test
+        uses: ./.github/actions/build-test
+        with:
+          julia-version: ${{ matrix.julia }}
+          julia-arch: ${{ matrix.platform.arch }}
+          lib-ext: ${{ matrix.platform.lib_ext }}
+          run-precompile: 'true'
+          run-tests: 'true'
+
+  gate:
+    name: CI Gate
+    runs-on: ubuntu-24.04
+    needs: [changes, build_test]
+    if: ${{ always() }}
+    steps:
+      - name: Decide
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "relevant_changes=${{ needs.changes.outputs.relevant }}"
+          echo "build_test_result=${{ needs.build_test.result }}"
+
+          if [[ "${{ needs.changes.outputs.relevant }}" == "true" ]]; then
+            if [[ "${{ needs.build_test.result }}" != "success" ]]; then
+              echo "ERROR: build/test failed"
+              exit 1
+            fi
+            echo "OK: build/test passed"
+          else
+            echo "OK: no relevant changes; build/test skipped"
+          fi

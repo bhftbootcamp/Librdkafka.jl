@@ -1,0 +1,36 @@
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+
+# Build artifacts
+build/
+deps/usr
+build.log
+*.zip
+*.tar.gz
+src/build/
+cmake_install.cmake
+CMakeCache.txt
+CMakeFiles/
+
+# Compiled libraries
+*.so
+*.dylib
+*.dll
+*.o
+*.a
+
+# Editor files, history
+*~
+.juliahistory
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Julia
+Manifest.toml
+LocalPreferences.toml
+
+# Intentionally invisible files
+_*

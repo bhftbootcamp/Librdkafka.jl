@@ -1,0 +1,22 @@
+name = "Librdkafka"
+uuid = "43e2f499-f4c7-585f-8317-cf0960ea7a2a"
+version = "0.1.0"
+
+[deps]
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+CxxWrap = "1f15a43c-97ca-5a2a-ae31-89f07a497df4"
+CyrusSASL_jll = "6422fedd-75a7-50c2-a7c3-a11dad25a896"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+librdkafka_jll = "7943bfb0-7437-5acd-a008-22777931c7aa"
+
+[compat]
+julia = "1.10"
+CyrusSASL_jll = "2.1.29"
+librdkafka_jll = "2.0"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
