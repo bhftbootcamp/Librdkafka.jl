@@ -14,9 +14,11 @@ export create_kafka_consumer,
     consumer_subscribe,
     consumer_assign,
     consumer_poll,
+    consumer_poll_raw,
     consumer_commit_sync,
     consumer_commit_record,
     consumer_seek_to_beginning,
+    consumer_seek_to_end,
     consumer_set_log_level
 
 export logging_disable,
@@ -69,6 +71,9 @@ consumer_assign(id::Integer, topic::AbstractString, partition::Integer, offset::
 consumer_poll(id::Integer, timeout_ms::Integer) =
     _cpp_call(:consumer_poll, Int(id), Int(timeout_ms))
 
+consumer_poll_raw(id::Integer, timeout_ms::Integer) =
+    _cpp_call(:consumer_poll_raw, Int(id), Int(timeout_ms))
+
 consumer_commit_sync(id::Integer) = _cpp_call(:consumer_commit_sync, Int(id))
 
 consumer_commit_record(id::Integer, topic::AbstractString, partition::Integer, offset::Integer) =
@@ -76,6 +81,9 @@ consumer_commit_record(id::Integer, topic::AbstractString, partition::Integer, o
 
 consumer_seek_to_beginning(id::Integer, topic::AbstractString, partition::Integer) =
     _cpp_call(:consumer_seek_to_beginning, Int(id), String(topic), Int(partition))
+
+consumer_seek_to_end(id::Integer, topic::AbstractString, partition::Integer) =
+    _cpp_call(:consumer_seek_to_end, Int(id), String(topic), Int(partition))
 
 consumer_set_log_level(id::Integer, level::Integer) =
     _cpp_call(:consumer_set_log_level, Int(id), Int(level))

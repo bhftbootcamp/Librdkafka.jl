@@ -42,6 +42,20 @@ Sentinel offset value used by librdkafka to indicate an invalid or unset offset.
 const RD_KAFKA_OFFSET_INVALID = -1001
 
 """
+    RD_KAFKA_OFFSET_BEGINNING::Int
+
+Special offset value used by librdkafka to seek to the beginning of a partition.
+"""
+const RD_KAFKA_OFFSET_BEGINNING = -2
+
+"""
+    RD_KAFKA_OFFSET_END::Int
+
+Special offset value used by librdkafka to seek to the end of a partition.
+"""
+const RD_KAFKA_OFFSET_END = -1
+
+"""
     DEFAULT_LOG_FORMAT::String
 
 Default logging format string used by the native logger.

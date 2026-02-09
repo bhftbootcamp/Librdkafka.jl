@@ -101,3 +101,81 @@ function _parse_records(raw::AbstractString)
     end
     return records
 end
+
+mutable struct _RawCursor
+    raw::Vector{UInt8}
+    i::Int
+end
+
+@inline function _read_u32_le(buf::Vector{UInt8}, i::Int)
+    i + 3 <= lastindex(buf) || _parse_error("unexpected end", i)
+    @inbounds v = UInt32(buf[i]) | (UInt32(buf[i + 1]) << 8) | (UInt32(buf[i + 2]) << 16) | (UInt32(buf[i + 3]) << 24)
+    return v, i + 4
+end
+
+@inline function _read_i32_le(buf::Vector{UInt8}, i::Int)
+    v, j = _read_u32_le(buf, i)
+    return reinterpret(Int32, v), j
+end
+
+@inline function _read_i64_le(buf::Vector{UInt8}, i::Int)
+    i + 7 <= lastindex(buf) || _parse_error("unexpected end", i)
+    @inbounds v = UInt64(buf[i]) |
+                 (UInt64(buf[i + 1]) << 8) |
+                 (UInt64(buf[i + 2]) << 16) |
+                 (UInt64(buf[i + 3]) << 24) |
+                 (UInt64(buf[i + 4]) << 32) |
+                 (UInt64(buf[i + 5]) << 40) |
+                 (UInt64(buf[i + 6]) << 48) |
+                 (UInt64(buf[i + 7]) << 56)
+    return reinterpret(Int64, v), i + 8
+end
+
+function _parse_one_record_raw!(c::_RawCursor)
+    raw = c.raw
+    i = c.i
+    n = lastindex(raw)
+    i > n && _parse_error("unexpected end", i)
+
+    topic_len_u, i = _read_u32_le(raw, i)
+    topic_len = Int(topic_len_u)
+    topic_len < 0 && _parse_error("negative topic length", i)
+    i + topic_len - 1 <= n || _parse_error("unexpected end", i)
+    topic = topic_len == 0 ? "" : String(copy(@view raw[i:(i + topic_len - 1)]))
+    i += topic_len
+
+    partition_i32, i = _read_i32_le(raw, i)
+    partition = Int(partition_i32)
+    partition < 0 && _parse_error("negative partition", i)
+
+    offset_i64, i = _read_i64_le(raw, i)
+    timestamp_i64, i = _read_i64_le(raw, i)
+
+    key_len_u, i = _read_u32_le(raw, i)
+    key_len = Int(key_len_u)
+    key_len < 0 && _parse_error("negative key length", i)
+    i + key_len - 1 <= n || _parse_error("unexpected end", i)
+    key = key_len == 0 ? UInt8[] : copy(@view raw[i:(i + key_len - 1)])
+    i += key_len
+
+    value_len_u, i = _read_u32_le(raw, i)
+    value_len = Int(value_len_u)
+    value_len < 0 && _parse_error("negative value length", i)
+    i + value_len - 1 <= n || _parse_error("unexpected end", i)
+    value = value_len == 0 ? UInt8[] : copy(@view raw[i:(i + value_len - 1)])
+    i += value_len
+
+    c.i = i
+    return ConsumerRecordRaw(Topic(topic), Partition(partition), Int(offset_i64), key, value, Int(timestamp_i64))
+end
+
+function _parse_records_raw(raw::Vector{UInt8})
+    records = ConsumerRecordRaw[]
+    isempty(raw) && return records
+    c = _RawCursor(raw, firstindex(raw))
+    n = lastindex(raw)
+    while c.i <= n
+        push!(records, _parse_one_record_raw!(c))
+    end
+    return records
+end

@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstddef>
 #include <ctime>
 #include <exception>
@@ -12,6 +13,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -62,6 +64,32 @@ std::string base64_encode(const void* data, size_t len)
         }
     }
     return out;
+}
+
+inline void append_u32_le(std::vector<std::uint8_t>& out, std::uint32_t v)
+{
+    out.push_back(static_cast<std::uint8_t>(v & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((v >> 8) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((v >> 16) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((v >> 24) & 0xFF));
+}
+
+inline void append_i32_le(std::vector<std::uint8_t>& out, std::int32_t v)
+{
+    append_u32_le(out, static_cast<std::uint32_t>(v));
+}
+
+inline void append_i64_le(std::vector<std::uint8_t>& out, std::int64_t v)
+{
+    const std::uint64_t u = static_cast<std::uint64_t>(v);
+    out.push_back(static_cast<std::uint8_t>(u & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((u >> 8) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((u >> 16) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((u >> 24) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((u >> 32) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((u >> 40) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((u >> 48) & 0xFF));
+    out.push_back(static_cast<std::uint8_t>((u >> 56) & 0xFF));
 }
 
 enum class LogSink
@@ -359,6 +387,54 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         return result;
     });
 
+    mod.method("consumer_poll_raw", [](int consumer_id, int timeout_ms) -> std::vector<std::uint8_t> {
+        if (!consumer_store.count(consumer_id)) {
+            throw std::runtime_error("KafkaConsumer handle not found. It may be closed or invalid.");
+        }
+        auto records = consumer_store[consumer_id]->poll(std::chrono::milliseconds(timeout_ms));
+        std::vector<std::uint8_t> out;
+        std::size_t estimate = 0;
+        for (const auto& record : records) {
+            const auto& topic = record.topic();
+            const auto key = record.key();
+            const auto value = record.value();
+            estimate += 4 + topic.size() + 4 + 8 + 8 + 4 + key.size() + 4 + value.size();
+        }
+        out.reserve(estimate);
+        for (const auto& record : records) {
+            const auto& topic = record.topic();
+            const auto key = record.key();
+            const auto value = record.value();
+
+            if (topic.size() > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::runtime_error("Topic name too large for raw encoding.");
+            }
+            if (key.size() > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::runtime_error("Key too large for raw encoding.");
+            }
+            if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::runtime_error("Value too large for raw encoding.");
+            }
+
+            append_u32_le(out, static_cast<std::uint32_t>(topic.size()));
+            out.insert(out.end(), topic.begin(), topic.end());
+            append_i32_le(out, record.partition());
+            append_i64_le(out, record.offset());
+            append_i64_le(out, record.timestamp().msSinceEpoch);
+            append_u32_le(out, static_cast<std::uint32_t>(key.size()));
+            if (key.size() > 0) {
+                const auto* key_ptr = static_cast<const std::uint8_t*>(key.data());
+                out.insert(out.end(), key_ptr, key_ptr + key.size());
+            }
+            append_u32_le(out, static_cast<std::uint32_t>(value.size()));
+            if (value.size() > 0) {
+                const auto* value_ptr = static_cast<const std::uint8_t*>(value.data());
+                out.insert(out.end(), value_ptr, value_ptr + value.size());
+            }
+        }
+        return out;
+    });
+
     mod.method("consumer_commit_sync", [](int consumer_id) -> int {
         if (consumer_store.count(consumer_id)) {
             consumer_store[consumer_id]->commitSync();
@@ -396,6 +472,13 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         if (consumer_store.count(consumer_id)) {
             kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
             consumer_store[consumer_id]->seekToBeginning(partitions);
+        }
+    });
+
+    mod.method("consumer_seek_to_end", [](int consumer_id, const std::string& topic, int partition) {
+        if (consumer_store.count(consumer_id)) {
+            kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
+            consumer_store[consumer_id]->seekToEnd(partitions);
         }
     });
 

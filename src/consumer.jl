@@ -92,8 +92,22 @@ function poll(c::KafkaConsumer; timeout_ms::Integer=1000)
     return _parse_records(raw)
 end
 
+function poll_raw(c::KafkaConsumer; timeout_ms::Integer=1000)
+    _checkopen(c)
+    _checkready(c)
+    timeout_ms < 0 && throw(DomainError(timeout_ms, "timeout_ms must be non-negative."))
+    raw = _B.consumer_poll_raw(c.id, Int(timeout_ms))
+    isempty(raw) && return ConsumerRecordRaw[]
+    return _parse_records_raw(raw)
+end
+
 function poll_one(c::KafkaConsumer; timeout_ms::Integer=1000)
     rs = poll(c; timeout_ms=timeout_ms)
+    return isempty(rs) ? nothing : first(rs)
+end
+
+function poll_one_raw(c::KafkaConsumer; timeout_ms::Integer=1000)
+    rs = poll_raw(c; timeout_ms=timeout_ms)
     return isempty(rs) ? nothing : first(rs)
 end
 
@@ -125,5 +139,15 @@ end
 
 seek_to_beginning!(c::KafkaConsumer, topic::AbstractString, partition::Integer) =
     seek_to_beginning!(c, TopicPartition(topic, partition))
+
+function seek_to_end!(c::KafkaConsumer, tp::TopicPartition)
+    _checkopen(c)
+    _checkready(c)
+    _B.consumer_seek_to_end(c.id, tp.topic.name, tp.partition.id)
+    return c
+end
+
+seek_to_end!(c::KafkaConsumer, topic::AbstractString, partition::Integer) =
+    seek_to_end!(c, TopicPartition(topic, partition))
 
 log_level!(c::KafkaConsumer, level::Integer) = (_checkopen(c); _B.consumer_set_log_level(c.id, Int(level)); c)
