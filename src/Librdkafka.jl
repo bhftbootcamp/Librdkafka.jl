@@ -5,16 +5,18 @@ export BOOTSTRAP_SERVERS,
     GROUP_ID,
     AUTO_OFFSET_RESET,
     ENABLE_AUTO_COMMIT,
-    RD_KAFKA_OFFSET_INVALID
+    RD_KAFKA_OFFSET_INVALID,
+    RD_KAFKA_OFFSET_BEGINNING,
+    RD_KAFKA_OFFSET_END
 
 export KafkaProducer, KafkaConsumer
-export Topic, Partition, TopicPartition, Assignment, ConsumerRecord
+export Topic, Partition, TopicPartition, Assignment, ConsumerRecord, ConsumerRecordRaw
 
 export produce, produce_binary
 export subscribe!, assign!
-export poll, poll_one
+export poll, poll_one, poll_raw, poll_one_raw
 export commit, commit_record
-export seek_to_beginning!
+export seek_to_beginning!, seek_to_end!
 export log_level!
 export disable_logs!, log_format!, log_stdout!, log_file!, enable_default_logs!
 export get_bootstrap_servers
@@ -25,6 +27,8 @@ const GROUP_ID = "group.id"
 const AUTO_OFFSET_RESET = "auto.offset.reset"
 const ENABLE_AUTO_COMMIT = "enable.auto.commit"
 
+const RD_KAFKA_OFFSET_BEGINNING = -2
+const RD_KAFKA_OFFSET_END = -1
 const RD_KAFKA_OFFSET_INVALID = -1001
 const DEFAULT_LOG_FORMAT = "{timestamp} [{level}] {message}"
 
@@ -76,10 +80,25 @@ struct ConsumerRecord
     timestamp_ms::Int
 end
 
+struct ConsumerRecordRaw
+    topic::Topic
+    partition::Partition
+    offset::Int
+    key::Vector{UInt8}
+    value::Vector{UInt8}
+    timestamp_ms::Int
+end
+
 function Base.show(io::IO, r::ConsumerRecord)
     ts = Dates.unix2datetime(r.timestamp_ms / 1000)
     print(io, "ConsumerRecord(", r.topic.name, ":", r.partition.id, " @", r.offset,
           ", key=\"", r.key, "\", value=\"", r.value, "\", ts=", ts, ")")
+end
+
+function Base.show(io::IO, r::ConsumerRecordRaw)
+    ts = Dates.unix2datetime(r.timestamp_ms / 1000)
+    print(io, "ConsumerRecordRaw(", r.topic.name, ":", r.partition.id, " @", r.offset,
+          ", key_bytes=", length(r.key), ", value_bytes=", length(r.value), ", ts=", ts, ")")
 end
 
 @noinline _closed(kind::Symbol, id::Int) =
