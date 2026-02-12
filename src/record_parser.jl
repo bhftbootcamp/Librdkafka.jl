@@ -102,23 +102,23 @@ function _parse_records(raw::AbstractString)
     return records
 end
 
-mutable struct _RawCursor
-    raw::Vector{UInt8}
+mutable struct _RawCursor{V<:AbstractVector{UInt8}}
+    raw::V
     i::Int
 end
 
-@inline function _read_u32_le(buf::Vector{UInt8}, i::Int)
+@inline function _read_u32_le(buf::AbstractVector{UInt8}, i::Int)
     i + 3 <= lastindex(buf) || _parse_error("unexpected end", i)
     @inbounds v = UInt32(buf[i]) | (UInt32(buf[i + 1]) << 8) | (UInt32(buf[i + 2]) << 16) | (UInt32(buf[i + 3]) << 24)
     return v, i + 4
 end
 
-@inline function _read_i32_le(buf::Vector{UInt8}, i::Int)
+@inline function _read_i32_le(buf::AbstractVector{UInt8}, i::Int)
     v, j = _read_u32_le(buf, i)
     return reinterpret(Int32, v), j
 end
 
-@inline function _read_i64_le(buf::Vector{UInt8}, i::Int)
+@inline function _read_i64_le(buf::AbstractVector{UInt8}, i::Int)
     i + 7 <= lastindex(buf) || _parse_error("unexpected end", i)
     @inbounds v = UInt64(buf[i]) |
                  (UInt64(buf[i + 1]) << 8) |
@@ -141,7 +141,7 @@ function _parse_one_record_raw!(c::_RawCursor)
     topic_len = Int(topic_len_u)
     topic_len < 0 && _parse_error("negative topic length", i)
     i + topic_len - 1 <= n || _parse_error("unexpected end", i)
-    topic = topic_len == 0 ? "" : String(copy(@view raw[i:(i + topic_len - 1)]))
+    topic = topic_len == 0 ? "" : String(Vector{UInt8}(raw[i:(i + topic_len - 1)]))
     i += topic_len
 
     partition_i32, i = _read_i32_le(raw, i)
@@ -155,21 +155,21 @@ function _parse_one_record_raw!(c::_RawCursor)
     key_len = Int(key_len_u)
     key_len < 0 && _parse_error("negative key length", i)
     i + key_len - 1 <= n || _parse_error("unexpected end", i)
-    key = key_len == 0 ? UInt8[] : copy(@view raw[i:(i + key_len - 1)])
+    key = key_len == 0 ? UInt8[] : Vector{UInt8}(raw[i:(i + key_len - 1)])
     i += key_len
 
     value_len_u, i = _read_u32_le(raw, i)
     value_len = Int(value_len_u)
     value_len < 0 && _parse_error("negative value length", i)
     i + value_len - 1 <= n || _parse_error("unexpected end", i)
-    value = value_len == 0 ? UInt8[] : copy(@view raw[i:(i + value_len - 1)])
+    value = value_len == 0 ? UInt8[] : Vector{UInt8}(raw[i:(i + value_len - 1)])
     i += value_len
 
     c.i = i
     return ConsumerRecordRaw(Topic(topic), Partition(partition), Int(offset_i64), key, value, Int(timestamp_i64))
 end
 
-function _parse_records_raw(raw::Vector{UInt8})
+function _parse_records_raw(raw::AbstractVector{UInt8})
     records = ConsumerRecordRaw[]
     isempty(raw) && return records
     c = _RawCursor(raw, firstindex(raw))
