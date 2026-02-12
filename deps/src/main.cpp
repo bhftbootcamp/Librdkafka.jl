@@ -35,37 +35,6 @@
 #ifdef USE_JLCXX
 
 namespace {
-static const char kBase64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-std::string base64_encode(const void* data, size_t len)
-{
-    if (len == 0) {
-        return std::string();
-    }
-    const unsigned char* bytes = static_cast<const unsigned char*>(data);
-    std::string out;
-    out.reserve(((len + 2) / 3) * 4);
-    for (size_t i = 0; i < len; i += 3) {
-        const unsigned int b0 = bytes[i];
-        const unsigned int b1 = (i + 1 < len) ? bytes[i + 1] : 0;
-        const unsigned int b2 = (i + 2 < len) ? bytes[i + 2] : 0;
-
-        out.push_back(kBase64Alphabet[(b0 >> 2) & 0x3F]);
-        out.push_back(kBase64Alphabet[((b0 & 0x3) << 4) | ((b1 >> 4) & 0xF)]);
-        if (i + 1 < len) {
-            out.push_back(kBase64Alphabet[((b1 & 0xF) << 2) | ((b2 >> 6) & 0x3)]);
-        } else {
-            out.push_back('=');
-        }
-        if (i + 2 < len) {
-            out.push_back(kBase64Alphabet[b2 & 0x3F]);
-        } else {
-            out.push_back('=');
-        }
-    }
-    return out;
-}
-
 inline void append_u32_le(std::vector<std::uint8_t>& out, std::uint32_t v)
 {
     out.push_back(static_cast<std::uint8_t>(v & 0xFF));
@@ -302,7 +271,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("produce", [](int producer_id, const std::string& topic, int partition,
-                            const std::string& key, const std::string& value) -> std::string {
+                            const std::string& key, jlcxx::ArrayRef<uint8_t> value) -> std::string {
         if (!producer_store.count(producer_id)) {
             return "KafkaProducer handle not found. It may be closed or invalid.";
         }
@@ -363,28 +332,6 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         if (consumer_store.count(consumer_id)) {
             consumer_store[consumer_id]->subscribe(topics);
         }
-    });
-
-    mod.method("consumer_poll", [](int consumer_id, int timeout_ms) -> std::string {
-        std::string result;
-        if (!consumer_store.count(consumer_id)) {
-            return "ERROR: KafkaConsumer handle not found. It may be closed or invalid.";
-        }
-        auto records = consumer_store[consumer_id]->poll(std::chrono::milliseconds(timeout_ms));
-        for (const auto& record : records) {
-            result.append(record.topic()).push_back('\t');
-            result.append(std::to_string(record.partition())).push_back('\t');
-            result.append(std::to_string(record.offset())).push_back('\t');
-            const auto& key = record.key();
-            const auto& value = record.value();
-            const std::string key_b64 = base64_encode(key.data(), key.size());
-            const std::string value_b64 = base64_encode(value.data(), value.size());
-            result.append(key_b64).push_back('\t');
-            result.append(value_b64).push_back('\t');
-            result.append(std::to_string(record.timestamp().msSinceEpoch));
-            result.push_back('\n');
-        }
-        return result;
     });
 
     mod.method("consumer_poll_raw", [](int consumer_id, int timeout_ms) -> std::vector<std::uint8_t> {

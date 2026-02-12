@@ -37,7 +37,7 @@ function Base.close(p::KafkaProducer)
     return nothing
 end
 
-function produce(p::KafkaProducer, topic::Topic, partition::Partition, key::AbstractString, value::AbstractString)
+function produce(p::KafkaProducer, topic::Topic, partition::Partition, key::AbstractString, value::Vector{UInt8})
     _checkopen(p)
     err = _B.produce(p.id, topic.name, partition.id, key, value)
     err_s = String(err)
@@ -45,18 +45,7 @@ function produce(p::KafkaProducer, topic::Topic, partition::Partition, key::Abst
     throw(ErrorException("Kafka produce failed: $err_s"))
 end
 
-produce(p::KafkaProducer, topic::AbstractString, partition::Integer, key::AbstractString, value::AbstractString) =
+produce(p::KafkaProducer, topic::AbstractString, partition::Integer, key::AbstractString, value::Vector{UInt8}) =
     produce(p, Topic(topic), Partition(partition), key, value)
-
-function produce_binary(p::KafkaProducer, topic::Topic, partition::Partition, key::AbstractString, value::Vector{UInt8})
-    _checkopen(p)
-    err = _B.produce_binary(p.id, topic.name, partition.id, key, value)
-    err_s = String(err)
-    isempty(err_s) && return nothing
-    throw(ErrorException("Kafka produce_binary failed: $err_s"))
-end
-
-produce_binary(p::KafkaProducer, topic::AbstractString, partition::Integer, key::AbstractString, value::Vector{UInt8}) =
-    produce_binary(p, Topic(topic), Partition(partition), key, value)
 
 log_level!(p::KafkaProducer, level::Integer) = (_checkopen(p); _B.producer_set_log_level(p.id, Int(level)); p)

@@ -87,28 +87,8 @@ function poll(c::KafkaConsumer; timeout_ms::Integer=1000)
     _checkready(c)
     timeout_ms < 0 && throw(DomainError(timeout_ms, "timeout_ms must be non-negative."))
     raw = _B.consumer_poll(c.id, Int(timeout_ms))
-    startswith(raw, "ERROR: ") && throw(InvalidStateException("Consumer handle is invalid (maybe closed).", :closed))
     isempty(raw) && return ConsumerRecord[]
     return _parse_records(raw)
-end
-
-function poll_raw(c::KafkaConsumer; timeout_ms::Integer=1000)
-    _checkopen(c)
-    _checkready(c)
-    timeout_ms < 0 && throw(DomainError(timeout_ms, "timeout_ms must be non-negative."))
-    raw = _B.consumer_poll_raw(c.id, Int(timeout_ms))
-    isempty(raw) && return ConsumerRecordRaw[]
-    return _parse_records_raw(raw)
-end
-
-function poll_one(c::KafkaConsumer; timeout_ms::Integer=1000)
-    rs = poll(c; timeout_ms=timeout_ms)
-    return isempty(rs) ? nothing : first(rs)
-end
-
-function poll_one_raw(c::KafkaConsumer; timeout_ms::Integer=1000)
-    rs = poll_raw(c; timeout_ms=timeout_ms)
-    return isempty(rs) ? nothing : first(rs)
 end
 
 function commit(c::KafkaConsumer)
@@ -128,7 +108,7 @@ function commit_record(c::KafkaConsumer, r::ConsumerRecord)
 end
 
 commit_record(c::KafkaConsumer, topic::AbstractString, partition::Integer, offset::Integer) =
-    commit_record(c, ConsumerRecord(Topic(topic), Partition(partition), Int(offset), "", "", 0))
+    commit_record(c, ConsumerRecord(Topic(topic), Partition(partition), Int(offset), "", UInt8[], 0))
 
 function seek_to_beginning!(c::KafkaConsumer, tp::TopicPartition)
     _checkopen(c)
