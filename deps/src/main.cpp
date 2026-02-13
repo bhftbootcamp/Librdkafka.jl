@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <ctime>
+#include <deque>
 #include <exception>
 #include <fstream>
 #include <functional>
@@ -24,6 +25,8 @@
 #include <utility>
 #include <vector>
 
+#include <julia.h>
+
 #include "../include/kafka/Properties.h"
 #include "../include/kafka/ProducerRecord.h"
 #include "../include/kafka/ConsumerRecord.h"
@@ -35,37 +38,6 @@
 #ifdef USE_JLCXX
 
 namespace {
-static const char kBase64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-std::string base64_encode(const void* data, size_t len)
-{
-    if (len == 0) {
-        return std::string();
-    }
-    const unsigned char* bytes = static_cast<const unsigned char*>(data);
-    std::string out;
-    out.reserve(((len + 2) / 3) * 4);
-    for (size_t i = 0; i < len; i += 3) {
-        const unsigned int b0 = bytes[i];
-        const unsigned int b1 = (i + 1 < len) ? bytes[i + 1] : 0;
-        const unsigned int b2 = (i + 2 < len) ? bytes[i + 2] : 0;
-
-        out.push_back(kBase64Alphabet[(b0 >> 2) & 0x3F]);
-        out.push_back(kBase64Alphabet[((b0 & 0x3) << 4) | ((b1 >> 4) & 0xF)]);
-        if (i + 1 < len) {
-            out.push_back(kBase64Alphabet[((b1 & 0xF) << 2) | ((b2 >> 6) & 0x3)]);
-        } else {
-            out.push_back('=');
-        }
-        if (i + 2 < len) {
-            out.push_back(kBase64Alphabet[b2 & 0x3F]);
-        } else {
-            out.push_back('=');
-        }
-    }
-    return out;
-}
-
 inline void append_u32_le(std::vector<std::uint8_t>& out, std::uint32_t v)
 {
     out.push_back(static_cast<std::uint8_t>(v & 0xFF));
@@ -94,6 +66,7 @@ inline void append_i64_le(std::vector<std::uint8_t>& out, std::int64_t v)
 
 enum class LogSink
 {
+    JuliaLogger,
     Stdout,
     File
 };
@@ -104,10 +77,11 @@ struct LogState
     bool enabled = true;
     bool use_default_format = true;
     std::string format = "{timestamp} [{level}] {message}";
-    LogSink sink = LogSink::Stdout;
+    LogSink sink = LogSink::JuliaLogger;
     std::string file_path;
     bool file_append = true;
     std::unique_ptr<std::ofstream> file;
+    std::deque<std::string> pending_julia_logs;
 };
 
 LogState& log_state()
@@ -153,7 +127,23 @@ std::ostream* log_stream(LogState& state)
         }
         return state.file.get();
     }
-    return &std::cout;
+    return nullptr;
+}
+
+void write_to_julia_stdout(const std::string& line)
+{
+    jl_printf(jl_stdout_stream(), "%s\n", line.c_str());
+}
+
+std::string encode_julia_log(int level, const char* filename, int lineno, const char* msg)
+{
+    constexpr char sep = '\x1f';
+    std::ostringstream oss;
+    oss << level << sep
+        << (filename ? filename : "") << sep
+        << lineno << sep
+        << (msg ? msg : "");
+    return oss.str();
 }
 
 void emit_log(int level, const char* filename, int lineno, const char* msg)
@@ -161,6 +151,30 @@ void emit_log(int level, const char* filename, int lineno, const char* msg)
     auto& state = log_state();
     std::lock_guard<std::mutex> guard(state.mutex);
     if (!state.enabled) {
+        return;
+    }
+
+    if (state.sink == LogSink::JuliaLogger) {
+        static constexpr std::size_t MAX_PENDING_LOGS = 10000;
+        if (state.pending_julia_logs.size() >= MAX_PENDING_LOGS) {
+            state.pending_julia_logs.pop_front();
+        }
+        state.pending_julia_logs.push_back(encode_julia_log(level, filename, lineno, msg));
+        return;
+    }
+
+    if (state.sink == LogSink::Stdout) {
+        std::string line;
+        if (state.use_default_format) {
+            std::ostringstream oss;
+            oss << "[" << kafka::utility::getCurrentTime() << "]"
+                << kafka::Log::levelString(static_cast<std::size_t>(level)) << " "
+                << (msg ? msg : "");
+            line = oss.str();
+        } else {
+            line = format_log_line(state.format, level, filename, lineno, msg);
+        }
+        write_to_julia_stdout(line);
         return;
     }
 
@@ -176,10 +190,9 @@ void emit_log(int level, const char* filename, int lineno, const char* msg)
     }
 
     std::ostream* out = log_stream(state);
-    if (!out) {
-        return;
+    if (out) {
+        (*out) << line << std::endl;
     }
-    (*out) << line << std::endl;
 }
 
 kafka::clients::LogCallback& global_log_callback()
@@ -267,6 +280,27 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         state.enabled = true;
     });
 
+    mod.method("logging_set_julia", []() {
+        auto& state = log_state();
+        std::lock_guard<std::mutex> guard(state.mutex);
+        state.sink = LogSink::JuliaLogger;
+        state.file.reset();
+        state.file_path.clear();
+        state.enabled = true;
+    });
+
+    mod.method("logging_drain", []() -> std::vector<std::string> {
+        auto& state = log_state();
+        std::lock_guard<std::mutex> guard(state.mutex);
+        std::vector<std::string> out;
+        out.reserve(state.pending_julia_logs.size());
+        while (!state.pending_julia_logs.empty()) {
+            out.emplace_back(std::move(state.pending_julia_logs.front()));
+            state.pending_julia_logs.pop_front();
+        }
+        return out;
+    });
+
     mod.method("logging_set_file", [](const std::string& path, bool append) -> bool {
         auto& state = log_state();
         std::lock_guard<std::mutex> guard(state.mutex);
@@ -292,7 +326,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         state.enabled = true;
         state.use_default_format = true;
         state.format = "{timestamp} [{level}] {message}";
-        state.sink = LogSink::Stdout;
+        state.sink = LogSink::JuliaLogger;
         state.file.reset();
         state.file_path.clear();
     });
@@ -302,7 +336,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("produce", [](int producer_id, const std::string& topic, int partition,
-                            const std::string& key, const std::string& value) -> std::string {
+                            const std::string& key, jlcxx::ArrayRef<uint8_t> value) -> std::string {
         if (!producer_store.count(producer_id)) {
             return "KafkaProducer handle not found. It may be closed or invalid.";
         }
@@ -363,28 +397,6 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         if (consumer_store.count(consumer_id)) {
             consumer_store[consumer_id]->subscribe(topics);
         }
-    });
-
-    mod.method("consumer_poll", [](int consumer_id, int timeout_ms) -> std::string {
-        std::string result;
-        if (!consumer_store.count(consumer_id)) {
-            return "ERROR: KafkaConsumer handle not found. It may be closed or invalid.";
-        }
-        auto records = consumer_store[consumer_id]->poll(std::chrono::milliseconds(timeout_ms));
-        for (const auto& record : records) {
-            result.append(record.topic()).push_back('\t');
-            result.append(std::to_string(record.partition())).push_back('\t');
-            result.append(std::to_string(record.offset())).push_back('\t');
-            const auto& key = record.key();
-            const auto& value = record.value();
-            const std::string key_b64 = base64_encode(key.data(), key.size());
-            const std::string value_b64 = base64_encode(value.data(), value.size());
-            result.append(key_b64).push_back('\t');
-            result.append(value_b64).push_back('\t');
-            result.append(std::to_string(record.timestamp().msSinceEpoch));
-            result.push_back('\n');
-        }
-        return result;
     });
 
     mod.method("consumer_poll_raw", [](int consumer_id, int timeout_ms) -> std::vector<std::uint8_t> {
