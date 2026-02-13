@@ -57,6 +57,11 @@ jobs:
             echo "ERROR: registry/tag workflow must run on master, got: ${GITHUB_REF}"
             exit 1
           fi
+      
+      - uses: julia-actions/add-julia-registry@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          registry: bhftbootcamp/Green
 
       - uses: julia-actions/setup-julia@v2
         with:
