@@ -18,7 +18,7 @@ export poll
 export commit, commit_record
 export seek_to_beginning!, seek_to_end!
 export log_level!
-export disable_logs!, log_format!, log_stdout!, log_file!, enable_default_logs!
+export disable_logs!, log_format!, log_stdout!, log_julia!, log_file!, enable_default_logs!
 export get_bootstrap_servers
 
 const BOOTSTRAP_SERVERS = "bootstrap.servers"
@@ -96,6 +96,10 @@ include("record_parser.jl")
 include("producer.jl")
 include("consumer.jl")
 include("logging.jl")
+
+function __init__()
+    enable_default_logs!()
+end
 
 function get_bootstrap_servers()
     v = _B.get_bootstrap_servers()

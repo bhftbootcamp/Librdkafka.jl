@@ -52,7 +52,8 @@ using .NativeBindings: create_properties, properties_put, create_producer_record
     consumer_assign, consumer_seek_to_beginning, consumer_commit_record,
     producer_set_log_level, consumer_set_log_level,
     get_bootstrap_servers, StdString, StdSet,
-    logging_disable, logging_set_format, logging_set_stdout, logging_set_file, logging_enable_default
+    logging_disable, logging_set_format, logging_set_stdout, logging_set_julia,
+    logging_set_file, logging_drain, logging_enable_default
 """
     get_bootstrap_servers
 

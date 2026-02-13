@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <ctime>
+#include <deque>
 #include <exception>
 #include <fstream>
 #include <functional>
@@ -23,6 +24,8 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#include <julia.h>
 
 #include "../include/kafka/Properties.h"
 #include "../include/kafka/ProducerRecord.h"
@@ -63,6 +66,7 @@ inline void append_i64_le(std::vector<std::uint8_t>& out, std::int64_t v)
 
 enum class LogSink
 {
+    JuliaLogger,
     Stdout,
     File
 };
@@ -73,10 +77,11 @@ struct LogState
     bool enabled = true;
     bool use_default_format = true;
     std::string format = "{timestamp} [{level}] {message}";
-    LogSink sink = LogSink::Stdout;
+    LogSink sink = LogSink::JuliaLogger;
     std::string file_path;
     bool file_append = true;
     std::unique_ptr<std::ofstream> file;
+    std::deque<std::string> pending_julia_logs;
 };
 
 LogState& log_state()
@@ -122,7 +127,23 @@ std::ostream* log_stream(LogState& state)
         }
         return state.file.get();
     }
-    return &std::cout;
+    return nullptr;
+}
+
+void write_to_julia_stdout(const std::string& line)
+{
+    jl_printf(jl_stdout_stream(), "%s\n", line.c_str());
+}
+
+std::string encode_julia_log(int level, const char* filename, int lineno, const char* msg)
+{
+    constexpr char sep = '\x1f';
+    std::ostringstream oss;
+    oss << level << sep
+        << (filename ? filename : "") << sep
+        << lineno << sep
+        << (msg ? msg : "");
+    return oss.str();
 }
 
 void emit_log(int level, const char* filename, int lineno, const char* msg)
@@ -130,6 +151,30 @@ void emit_log(int level, const char* filename, int lineno, const char* msg)
     auto& state = log_state();
     std::lock_guard<std::mutex> guard(state.mutex);
     if (!state.enabled) {
+        return;
+    }
+
+    if (state.sink == LogSink::JuliaLogger) {
+        static constexpr std::size_t MAX_PENDING_LOGS = 10000;
+        if (state.pending_julia_logs.size() >= MAX_PENDING_LOGS) {
+            state.pending_julia_logs.pop_front();
+        }
+        state.pending_julia_logs.push_back(encode_julia_log(level, filename, lineno, msg));
+        return;
+    }
+
+    if (state.sink == LogSink::Stdout) {
+        std::string line;
+        if (state.use_default_format) {
+            std::ostringstream oss;
+            oss << "[" << kafka::utility::getCurrentTime() << "]"
+                << kafka::Log::levelString(static_cast<std::size_t>(level)) << " "
+                << (msg ? msg : "");
+            line = oss.str();
+        } else {
+            line = format_log_line(state.format, level, filename, lineno, msg);
+        }
+        write_to_julia_stdout(line);
         return;
     }
 
@@ -145,10 +190,9 @@ void emit_log(int level, const char* filename, int lineno, const char* msg)
     }
 
     std::ostream* out = log_stream(state);
-    if (!out) {
-        return;
+    if (out) {
+        (*out) << line << std::endl;
     }
-    (*out) << line << std::endl;
 }
 
 kafka::clients::LogCallback& global_log_callback()
@@ -236,6 +280,27 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         state.enabled = true;
     });
 
+    mod.method("logging_set_julia", []() {
+        auto& state = log_state();
+        std::lock_guard<std::mutex> guard(state.mutex);
+        state.sink = LogSink::JuliaLogger;
+        state.file.reset();
+        state.file_path.clear();
+        state.enabled = true;
+    });
+
+    mod.method("logging_drain", []() -> std::vector<std::string> {
+        auto& state = log_state();
+        std::lock_guard<std::mutex> guard(state.mutex);
+        std::vector<std::string> out;
+        out.reserve(state.pending_julia_logs.size());
+        while (!state.pending_julia_logs.empty()) {
+            out.emplace_back(std::move(state.pending_julia_logs.front()));
+            state.pending_julia_logs.pop_front();
+        }
+        return out;
+    });
+
     mod.method("logging_set_file", [](const std::string& path, bool append) -> bool {
         auto& state = log_state();
         std::lock_guard<std::mutex> guard(state.mutex);
@@ -261,7 +326,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         state.enabled = true;
         state.use_default_format = true;
         state.format = "{timestamp} [{level}] {message}";
-        state.sink = LogSink::Stdout;
+        state.sink = LogSink::JuliaLogger;
         state.file.reset();
         state.file_path.clear();
     });

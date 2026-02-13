@@ -22,7 +22,9 @@ export create_kafka_consumer,
 export logging_disable,
     logging_set_format,
     logging_set_stdout,
+    logging_set_julia,
     logging_set_file,
+    logging_drain,
     logging_enable_default
 
 export get_bootstrap_servers,
@@ -83,7 +85,9 @@ consumer_set_log_level(id::Integer, level::Integer) =
 logging_disable() = _cpp_call(:logging_disable)
 logging_set_format(fmt::AbstractString) = _cpp_call(:logging_set_format, String(fmt))
 logging_set_stdout() = _cpp_call(:logging_set_stdout)
+logging_set_julia() = _cpp_call(:logging_set_julia)
 logging_set_file(path::AbstractString, append::Bool) = _cpp_call(:logging_set_file, String(path), append)
+logging_drain() = _cpp_call(:logging_drain)
 logging_enable_default() = _cpp_call(:logging_enable_default)
 
 get_bootstrap_servers() = _cpp_call(:get_bootstrap_servers)
