@@ -39,13 +39,12 @@
     @testset "ConsumerRecord" begin
         t = Librdkafka.Topic("t")
         p = Librdkafka.Partition(0)
-        value = collect(codeunits("value"))
-        r = Librdkafka.ConsumerRecord(t, p, 42, "key", value, 0)
+        r = Librdkafka.ConsumerRecord(t, p, 42, "key", "value", 0)
         @test r.topic == t
         @test r.partition == p
         @test r.offset == 42
         @test r.key == "key"
-        @test r.value == value
+        @test r.value == "value"
         @test r.timestamp_ms == 0
     end
 end

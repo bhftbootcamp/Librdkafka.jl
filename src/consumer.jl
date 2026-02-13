@@ -21,7 +21,6 @@ mutable struct KafkaConsumer
         end
         id = _B.create_kafka_consumer(props_id)
         id == 0 && throw(ErrorException("Failed to create KafkaConsumer (native returned null handle)."))
-        _flush_native_logs!()
         c = new(Int(id), bs, gid, false, :none, Topic[], nothing)
         finalizer(close, c)
         return c
@@ -48,7 +47,6 @@ end
 function Base.close(c::KafkaConsumer)
     c.closed && return nothing
     _B.consumer_close(c.id)
-    _flush_native_logs!()
     c.closed = true
     return nothing
 end
@@ -59,7 +57,6 @@ function subscribe!(c::KafkaConsumer, topics::Vector{Topic})
     names = [t.name for t in topics]
     topics_set = _B.make_topics_set(names)
     _B.consumer_subscribe(c.id, topics_set)
-    _flush_native_logs!()
     c.log_mode = :subscribe
     c.subscribed_topics = topics
     c.assignment = nothing
@@ -73,7 +70,6 @@ function assign!(c::KafkaConsumer, a::Assignment)
     _checkopen(c)
     tp = a.topic_partition
     _B.consumer_assign(c.id, tp.topic.name, tp.partition.id, a.offset)
-    _flush_native_logs!()
     c.log_mode = :assign
     c.subscribed_topics = Topic[]
     c.assignment = a
@@ -91,16 +87,34 @@ function poll(c::KafkaConsumer; timeout_ms::Integer=1000)
     _checkready(c)
     timeout_ms < 0 && throw(DomainError(timeout_ms, "timeout_ms must be non-negative."))
     raw = _B.consumer_poll(c.id, Int(timeout_ms))
-    _flush_native_logs!()
+    startswith(raw, "ERROR: ") && throw(InvalidStateException("Consumer handle is invalid (maybe closed).", :closed))
     isempty(raw) && return ConsumerRecord[]
     return _parse_records(raw)
+end
+
+function poll_raw(c::KafkaConsumer; timeout_ms::Integer=1000)
+    _checkopen(c)
+    _checkready(c)
+    timeout_ms < 0 && throw(DomainError(timeout_ms, "timeout_ms must be non-negative."))
+    raw = _B.consumer_poll_raw(c.id, Int(timeout_ms))
+    isempty(raw) && return ConsumerRecordRaw[]
+    return _parse_records_raw(raw)
+end
+
+function poll_one(c::KafkaConsumer; timeout_ms::Integer=1000)
+    rs = poll(c; timeout_ms=timeout_ms)
+    return isempty(rs) ? nothing : first(rs)
+end
+
+function poll_one_raw(c::KafkaConsumer; timeout_ms::Integer=1000)
+    rs = poll_raw(c; timeout_ms=timeout_ms)
+    return isempty(rs) ? nothing : first(rs)
 end
 
 function commit(c::KafkaConsumer)
     _checkopen(c)
     _checkready(c)
     err = _B.consumer_commit_sync(c.id)
-    _flush_native_logs!()
     err == -1 && throw(InvalidStateException("Consumer handle is invalid (maybe closed).", :closed))
     err != 0 && throw(ErrorException("Offset commit failed (error_code=$(err))."))
     return c
@@ -110,18 +124,16 @@ function commit_record(c::KafkaConsumer, r::ConsumerRecord)
     _checkopen(c)
     _checkready(c)
     _B.consumer_commit_record(c.id, r.topic.name, r.partition.id, r.offset)
-    _flush_native_logs!()
     return c
 end
 
 commit_record(c::KafkaConsumer, topic::AbstractString, partition::Integer, offset::Integer) =
-    commit_record(c, ConsumerRecord(Topic(topic), Partition(partition), Int(offset), "", UInt8[], 0))
+    commit_record(c, ConsumerRecord(Topic(topic), Partition(partition), Int(offset), "", "", 0))
 
 function seek_to_beginning!(c::KafkaConsumer, tp::TopicPartition)
     _checkopen(c)
     _checkready(c)
     _B.consumer_seek_to_beginning(c.id, tp.topic.name, tp.partition.id)
-    _flush_native_logs!()
     return c
 end
 
@@ -132,11 +144,10 @@ function seek_to_end!(c::KafkaConsumer, tp::TopicPartition)
     _checkopen(c)
     _checkready(c)
     _B.consumer_seek_to_end(c.id, tp.topic.name, tp.partition.id)
-    _flush_native_logs!()
     return c
 end
 
 seek_to_end!(c::KafkaConsumer, topic::AbstractString, partition::Integer) =
     seek_to_end!(c, TopicPartition(topic, partition))
 
-log_level!(c::KafkaConsumer, level::Integer) = (_checkopen(c); _B.consumer_set_log_level(c.id, Int(level)); _flush_native_logs!(); c)
+log_level!(c::KafkaConsumer, level::Integer) = (_checkopen(c); _B.consumer_set_log_level(c.id, Int(level)); c)

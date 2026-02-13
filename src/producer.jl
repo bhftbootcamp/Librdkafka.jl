@@ -13,7 +13,6 @@ mutable struct KafkaProducer
         end
         id = _B.create_kafka_producer(props_id)
         id == 0 && throw(ErrorException("Failed to create KafkaProducer (native returned null handle)."))
-        _flush_native_logs!()
         p = new(Int(id), bs, false)
         finalizer(close, p)
         return p
@@ -34,21 +33,30 @@ end
 function Base.close(p::KafkaProducer)
     p.closed && return nothing
     _B.producer_close(p.id)
-    _flush_native_logs!()
     p.closed = true
     return nothing
 end
 
-function produce(p::KafkaProducer, topic::Topic, partition::Partition, key::AbstractString, value::Vector{UInt8})
+function produce(p::KafkaProducer, topic::Topic, partition::Partition, key::AbstractString, value::AbstractString)
     _checkopen(p)
     err = _B.produce(p.id, topic.name, partition.id, key, value)
-    _flush_native_logs!()
     err_s = String(err)
     isempty(err_s) && return nothing
     throw(ErrorException("Kafka produce failed: $err_s"))
 end
 
-produce(p::KafkaProducer, topic::AbstractString, partition::Integer, key::AbstractString, value::Vector{UInt8}) =
+produce(p::KafkaProducer, topic::AbstractString, partition::Integer, key::AbstractString, value::AbstractString) =
     produce(p, Topic(topic), Partition(partition), key, value)
 
-log_level!(p::KafkaProducer, level::Integer) = (_checkopen(p); _B.producer_set_log_level(p.id, Int(level)); _flush_native_logs!(); p)
+function produce_binary(p::KafkaProducer, topic::Topic, partition::Partition, key::AbstractString, value::Vector{UInt8})
+    _checkopen(p)
+    err = _B.produce_binary(p.id, topic.name, partition.id, key, value)
+    err_s = String(err)
+    isempty(err_s) && return nothing
+    throw(ErrorException("Kafka produce_binary failed: $err_s"))
+end
+
+produce_binary(p::KafkaProducer, topic::AbstractString, partition::Integer, key::AbstractString, value::Vector{UInt8}) =
+    produce_binary(p, Topic(topic), Partition(partition), key, value)
+
+log_level!(p::KafkaProducer, level::Integer) = (_checkopen(p); _B.producer_set_log_level(p.id, Int(level)); p)

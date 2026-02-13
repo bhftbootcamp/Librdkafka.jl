@@ -4,7 +4,6 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://bhftbootcamp.github.io/Librdkafka.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://bhftbootcamp.github.io/Librdkafka.jl/dev/)
 [![Build Status](https://github.com/bhftbootcamp/Librdkafka.jl/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/bhftbootcamp/Librdkafka.jl/actions/workflows/ci.yml?query=branch%3Amaster)
-[![Coverage](https://codecov.io/gh/bhftbootcamp/Librdkafka.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/bhftbootcamp/Librdkafka.jl)
 [![Registry](https://img.shields.io/badge/registry-Green-green)](https://github.com/bhftbootcamp/Green)
 
 Julia wrapper for librdkafka for producing and consuming Apache Kafka messages from Julia.

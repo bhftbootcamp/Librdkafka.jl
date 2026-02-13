@@ -6,6 +6,7 @@ export create_properties,
 export create_kafka_producer,
     producer_close,
     produce,
+    produce_binary,
     producer_set_log_level
 
 export create_kafka_consumer,
@@ -13,6 +14,7 @@ export create_kafka_consumer,
     consumer_subscribe,
     consumer_assign,
     consumer_poll,
+    consumer_poll_raw,
     consumer_commit_sync,
     consumer_commit_record,
     consumer_seek_to_beginning,
@@ -22,9 +24,7 @@ export create_kafka_consumer,
 export logging_disable,
     logging_set_format,
     logging_set_stdout,
-    logging_set_julia,
     logging_set_file,
-    logging_drain,
     logging_enable_default
 
 export get_bootstrap_servers,
@@ -50,8 +50,11 @@ properties_put(props_id, key::AbstractString, val::AbstractString) =
 create_kafka_producer(props_id) = _cpp_call(:create_kafka_producer, props_id)
 producer_close(id::Integer) = _cpp_call(:producer_close, Int(id))
 
-produce(id::Integer, topic::AbstractString, partition::Integer, key::AbstractString, value::Vector{UInt8}) =
-    _cpp_call(:produce, Int(id), String(topic), Int(partition), String(key), value)
+produce(id::Integer, topic::AbstractString, partition::Integer, key::AbstractString, value::AbstractString) =
+    _cpp_call(:produce, Int(id), String(topic), Int(partition), String(key), String(value))
+
+produce_binary(id::Integer, topic::AbstractString, partition::Integer, key::AbstractString, value::Vector{UInt8}) =
+    _cpp_call(:produce_binary, Int(id), String(topic), Int(partition), String(key), value)
 
 producer_set_log_level(id::Integer, level::Integer) =
     _cpp_call(:producer_set_log_level, Int(id), Int(level))
@@ -66,6 +69,9 @@ consumer_assign(id::Integer, topic::AbstractString, partition::Integer, offset::
     _cpp_call(:consumer_assign, Int(id), String(topic), Int(partition), Int(offset))
 
 consumer_poll(id::Integer, timeout_ms::Integer) =
+    _cpp_call(:consumer_poll, Int(id), Int(timeout_ms))
+
+consumer_poll_raw(id::Integer, timeout_ms::Integer) =
     _cpp_call(:consumer_poll_raw, Int(id), Int(timeout_ms))
 
 consumer_commit_sync(id::Integer) = _cpp_call(:consumer_commit_sync, Int(id))
@@ -85,9 +91,7 @@ consumer_set_log_level(id::Integer, level::Integer) =
 logging_disable() = _cpp_call(:logging_disable)
 logging_set_format(fmt::AbstractString) = _cpp_call(:logging_set_format, String(fmt))
 logging_set_stdout() = _cpp_call(:logging_set_stdout)
-logging_set_julia() = _cpp_call(:logging_set_julia)
 logging_set_file(path::AbstractString, append::Bool) = _cpp_call(:logging_set_file, String(path), append)
-logging_drain() = _cpp_call(:logging_drain)
 logging_enable_default() = _cpp_call(:logging_enable_default)
 
 get_bootstrap_servers() = _cpp_call(:get_bootstrap_servers)

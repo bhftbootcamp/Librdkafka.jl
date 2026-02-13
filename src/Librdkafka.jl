@@ -10,15 +10,15 @@ export BOOTSTRAP_SERVERS,
     RD_KAFKA_OFFSET_END
 
 export KafkaProducer, KafkaConsumer
-export Topic, Partition, TopicPartition, Assignment, ConsumerRecord
+export Topic, Partition, TopicPartition, Assignment, ConsumerRecord, ConsumerRecordRaw
 
-export produce
+export produce, produce_binary
 export subscribe!, assign!
-export poll
+export poll, poll_one, poll_raw, poll_one_raw
 export commit, commit_record
 export seek_to_beginning!, seek_to_end!
 export log_level!
-export disable_logs!, log_format!, log_stdout!, log_julia!, log_file!, enable_default_logs!
+export disable_logs!, log_format!, log_stdout!, log_file!, enable_default_logs!
 export get_bootstrap_servers
 
 const BOOTSTRAP_SERVERS = "bootstrap.servers"
@@ -33,6 +33,7 @@ const RD_KAFKA_OFFSET_INVALID = -1001
 const DEFAULT_LOG_FORMAT = "{timestamp} [{level}] {message}"
 
 using Dates
+using Base64
 
 struct Topic
     name::String
@@ -75,6 +76,15 @@ struct ConsumerRecord
     partition::Partition
     offset::Int
     key::String
+    value::String
+    timestamp_ms::Int
+end
+
+struct ConsumerRecordRaw
+    topic::Topic
+    partition::Partition
+    offset::Int
+    key::Vector{UInt8}
     value::Vector{UInt8}
     timestamp_ms::Int
 end
@@ -82,7 +92,13 @@ end
 function Base.show(io::IO, r::ConsumerRecord)
     ts = Dates.unix2datetime(r.timestamp_ms / 1000)
     print(io, "ConsumerRecord(", r.topic.name, ":", r.partition.id, " @", r.offset,
-          ", key=\"", r.key, "\", value_bytes=", length(r.value), ", ts=", ts, ")")
+          ", key=\"", r.key, "\", value=\"", r.value, "\", ts=", ts, ")")
+end
+
+function Base.show(io::IO, r::ConsumerRecordRaw)
+    ts = Dates.unix2datetime(r.timestamp_ms / 1000)
+    print(io, "ConsumerRecordRaw(", r.topic.name, ":", r.partition.id, " @", r.offset,
+          ", key_bytes=", length(r.key), ", value_bytes=", length(r.value), ", ts=", ts, ")")
 end
 
 @noinline _closed(kind::Symbol, id::Int) =
@@ -96,10 +112,6 @@ include("record_parser.jl")
 include("producer.jl")
 include("consumer.jl")
 include("logging.jl")
-
-function __init__()
-    enable_default_logs!()
-end
 
 function get_bootstrap_servers()
     v = _B.get_bootstrap_servers()
