@@ -32,6 +32,18 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure tag commit is on master
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
+          tag_commit="$(git rev-list -n 1 "${GITHUB_REF_NAME}")"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/master; then
+            echo "ERROR: tag ${GITHUB_REF_NAME} points to commit not reachable from master"
+            echo "tag_commit=$tag_commit"
+            echo "origin/master=$(git rev-parse origin/master)"
+            exit 1
+          fi
+
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1.10'
