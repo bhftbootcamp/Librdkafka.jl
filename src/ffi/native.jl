@@ -41,7 +41,7 @@ function __init__()
 end
 
 """
-    make_topics_set(topic_names::Vector{String}) -> StdSet{StdString}
+    make_topics_set
 
 Convert a Julia string vector to a C++ `std::set<std::string>` for use with
 `consumer_subscribe`.

@@ -1,5 +1,5 @@
 """
-    KafkaProducer(bootstrap_servers; config=Dict())
+    KafkaProducer
 
 Create a Kafka producer connected to the given brokers.
 
@@ -51,8 +51,7 @@ function Base.close(p::KafkaProducer)
 end
 
 """
-    produce(p, topic, partition, key, value::Vector{UInt8})
-    produce(p, topic, partition, key, value::AbstractString)
+    produce
 
 Send a message to Kafka.  `value` may be raw bytes or a UTF-8 string.
 `topic` and `partition` accept both typed (`Topic`/`Partition`) and plain values.
@@ -75,9 +74,9 @@ produce(p::KafkaProducer, topic, partition, key::AbstractString, value::Abstract
     produce(p, topic, partition, key, Vector{UInt8}(codeunits(value)))
 
 """
-    log_level!(p::KafkaProducer, level::Integer) -> p
+    log_level!
 
-Set the librdkafka log verbosity level (0–7) for this producer.
+Set the librdkafka log verbosity level (0-7) for this producer.
 """
 function log_level!(p::KafkaProducer, level::Integer)
     _checkopen(p)

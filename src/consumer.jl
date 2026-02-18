@@ -1,5 +1,5 @@
 """
-    KafkaConsumer(bootstrap_servers; group_id=nothing, config=Dict())
+    KafkaConsumer
 
 Create a Kafka consumer connected to the given brokers.
 
@@ -30,10 +30,10 @@ mutable struct KafkaConsumer
         gid = group_id === nothing ? nothing : String(group_id)
         props_id = _build_properties(bootstrap_servers; group_id=gid, config=config)
         id = _B.create_kafka_consumer(props_id)
+        bs = String(bootstrap_servers)
         id == 0 && throw(ErrorException("Failed to create KafkaConsumer (native returned null handle)."))
         _flush_native_logs!()
-        c = new(Int(id), String(bootstrap_servers), gid, false,
-                :none, Topic[], nothing)
+        c = new(Int(id), bs, gid, false, :none, Topic[], nothing)
         finalizer(close, c)
         return c
     end
@@ -67,7 +67,7 @@ function Base.close(c::KafkaConsumer)
 end
 
 """
-    subscribe!(c::KafkaConsumer, topics)
+    subscribe!(
 
 Subscribe to one or more topics using Kafka's group protocol.
 `topics` may be a `Vector{Topic}`, `Vector{String}`, or a single `String`.
@@ -91,8 +91,7 @@ subscribe!(c::KafkaConsumer, topic::AbstractString) =
     subscribe!(c, [Topic(topic)])
 
 """
-    assign!(c::KafkaConsumer, assignment)
-    assign!(c, topic, partition; offset=RD_KAFKA_OFFSET_INVALID)
+    assign!
 
 Manually assign a specific topic-partition (and optional offset) to the consumer.
 """
@@ -115,7 +114,7 @@ assign!(c::KafkaConsumer, topic::AbstractString, partition::Integer;
     assign!(c, TopicPartition(topic, partition); offset=offset)
 
 """
-    poll(c::KafkaConsumer; timeout_ms=1000) -> Vector{ConsumerRecord}
+    poll
 
 Poll for new messages. Returns an empty vector if nothing is available within
 `timeout_ms` milliseconds.
@@ -131,7 +130,7 @@ function poll(c::KafkaConsumer; timeout_ms::Integer=1000)
 end
 
 """
-    commit(c::KafkaConsumer)
+    commit
 
 Synchronously commit the current consumer offsets for all assigned partitions.
 """
@@ -146,8 +145,7 @@ function commit(c::KafkaConsumer)
 end
 
 """
-    commit_record(c::KafkaConsumer, record::ConsumerRecord)
-    commit_record(c, topic, partition, offset)
+    commit_record
 
 Commit the offset of a specific record.
 """
@@ -163,8 +161,7 @@ commit_record(c::KafkaConsumer, topic::AbstractString, partition::Integer, offse
     commit_record(c, ConsumerRecord(Topic(topic), Partition(partition), Int(offset), "", UInt8[], 0))
 
 """
-    seek_to_beginning!(c, topic_partition)
-    seek_to_beginning!(c, topic, partition)
+    seek_to_beginning!
 
 Seek the consumer to the beginning of the given partition.
 """
@@ -180,8 +177,7 @@ seek_to_beginning!(c::KafkaConsumer, topic::AbstractString, partition::Integer) 
     seek_to_beginning!(c, TopicPartition(topic, partition))
 
 """
-    seek_to_end!(c, topic_partition)
-    seek_to_end!(c, topic, partition)
+    seek_to_end!
 
 Seek the consumer to the end (latest offset) of the given partition.
 """
@@ -197,9 +193,9 @@ seek_to_end!(c::KafkaConsumer, topic::AbstractString, partition::Integer) =
     seek_to_end!(c, TopicPartition(topic, partition))
 
 """
-    log_level!(c::KafkaConsumer, level::Integer) -> c
+    log_level!
 
-Set the librdkafka log verbosity level (0–7) for this consumer.
+Set the librdkafka log verbosity level (0-7) for this consumer.
 """
 function log_level!(c::KafkaConsumer, level::Integer)
     _checkopen(c)

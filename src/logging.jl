@@ -60,7 +60,7 @@ function _stop_native_log_timer!()
 end
 
 """
-    disable_logs!()
+    disable_logs!
 
 Stop all native log output and tear down the background log timer.
 """
@@ -71,7 +71,7 @@ function disable_logs!()
 end
 
 """
-    log_format!(format=DEFAULT_LOG_FORMAT)
+    log_format!
 
 Set the native log format string.
 """
@@ -79,7 +79,7 @@ log_format!(format::AbstractString=DEFAULT_LOG_FORMAT) =
     (_B.logging_set_format(String(format)); nothing)
 
 """
-    log_stdout!()
+    log_stdout!
 
 Route native logs directly to stdout (bypasses Julia logging).
 """
@@ -90,7 +90,7 @@ function log_stdout!()
 end
 
 """
-    log_julia!()
+    log_julia!
 
 Route native logs through Julia's `Logging` framework.
 """
@@ -101,7 +101,7 @@ function log_julia!()
 end
 
 """
-    log_file!(path; append=true)
+    log_file!
 
 Route native logs to a file at `path`.
 """
@@ -113,7 +113,7 @@ function log_file!(path::AbstractString; append::Bool=true)
 end
 
 """
-    enable_default_logs!()
+    enable_default_logs!
 
 Restore the default logging behaviour (Julia bridge with background timer).
 """
