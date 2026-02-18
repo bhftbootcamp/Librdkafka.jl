@@ -1,20 +1,30 @@
+"""
+    KafkaProducer(bootstrap_servers; config=Dict())
+
+Create a Kafka producer connected to the given brokers.
+
+The `config` dictionary accepts any librdkafka configuration property as
+`String => String` pairs.  The producer is automatically closed by a finalizer
+but can also be closed explicitly with `close(p)`.
+
+# Example
+```julia
+p = KafkaProducer("localhost:9092")
+produce(p, "my-topic", 0, "key", "hello")
+close(p)
+```
+"""
 mutable struct KafkaProducer
     id::Int
     bootstrap_servers::String
     closed::Bool
 
-    function KafkaProducer(bootstrap_servers::AbstractString; config::AbstractDict=Dict())
-        bs = String(bootstrap_servers)
-        isempty(bs) && throw(ArgumentError("bootstrap_servers is empty."))
-        props_id = _B.create_properties()
-        _B.properties_put(props_id, BOOTSTRAP_SERVERS, bs)
-        for (k, v) in config
-            _B.properties_put(props_id, string(k), string(v))
-        end
+    function KafkaProducer(bootstrap_servers::AbstractString; config::AbstractDict=Dict{String,String}())
+        props_id = _build_properties(bootstrap_servers; config=config)
         id = _B.create_kafka_producer(props_id)
         id == 0 && throw(ErrorException("Failed to create KafkaProducer (native returned null handle)."))
         _flush_native_logs!()
-        p = new(Int(id), bs, false)
+        p = new(Int(id), String(bootstrap_servers), false)
         finalizer(close, p)
         return p
     end
@@ -23,7 +33,8 @@ end
 Base.isopen(p::KafkaProducer) = !p.closed
 
 function Base.show(io::IO, p::KafkaProducer)
-    print(io, "KafkaProducer(", p.bootstrap_servers, ", id=", p.id, p.closed ? ", closed)" : ", open)")
+    state = p.closed ? "closed" : "open"
+    print(io, "KafkaProducer(", p.bootstrap_servers, ", id=", p.id, ", ", state, ")")
 end
 
 @inline function _checkopen(p::KafkaProducer)
@@ -39,7 +50,15 @@ function Base.close(p::KafkaProducer)
     return nothing
 end
 
-function produce(p::KafkaProducer, topic::Topic, partition::Partition, key::AbstractString, value::Vector{UInt8})
+"""
+    produce(p, topic, partition, key, value::Vector{UInt8})
+    produce(p, topic, partition, key, value::AbstractString)
+
+Send a message to Kafka.  `value` may be raw bytes or a UTF-8 string.
+`topic` and `partition` accept both typed (`Topic`/`Partition`) and plain values.
+"""
+function produce(p::KafkaProducer, topic::Topic, partition::Partition,
+                 key::AbstractString, value::Vector{UInt8})
     _checkopen(p)
     err = _B.produce(p.id, topic.name, partition.id, key, value)
     _flush_native_logs!()
@@ -48,7 +67,21 @@ function produce(p::KafkaProducer, topic::Topic, partition::Partition, key::Abst
     throw(ErrorException("Kafka produce failed: $err_s"))
 end
 
-produce(p::KafkaProducer, topic::AbstractString, partition::Integer, key::AbstractString, value::Vector{UInt8}) =
+produce(p::KafkaProducer, topic::AbstractString, partition::Integer,
+        key::AbstractString, value::Vector{UInt8}) =
     produce(p, Topic(topic), Partition(partition), key, value)
 
-log_level!(p::KafkaProducer, level::Integer) = (_checkopen(p); _B.producer_set_log_level(p.id, Int(level)); _flush_native_logs!(); p)
+produce(p::KafkaProducer, topic, partition, key::AbstractString, value::AbstractString) =
+    produce(p, topic, partition, key, Vector{UInt8}(codeunits(value)))
+
+"""
+    log_level!(p::KafkaProducer, level::Integer) -> p
+
+Set the librdkafka log verbosity level (0–7) for this producer.
+"""
+function log_level!(p::KafkaProducer, level::Integer)
+    _checkopen(p)
+    _B.producer_set_log_level(p.id, Int(level))
+    _flush_native_logs!()
+    return p
+end

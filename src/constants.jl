@@ -35,25 +35,25 @@ Kafka configuration key that enables automatic offset commits (`"enable.auto.com
 const ENABLE_AUTO_COMMIT = "enable.auto.commit"
 
 """
-    RD_KAFKA_OFFSET_INVALID::Int
-
-Sentinel offset value used by librdkafka to indicate an invalid or unset offset.
-"""
-const RD_KAFKA_OFFSET_INVALID = -1001
-
-"""
     RD_KAFKA_OFFSET_BEGINNING::Int
 
-Special offset value used by librdkafka to seek to the beginning of a partition.
+Special offset value: seek to the beginning of a partition (`-2`).
 """
 const RD_KAFKA_OFFSET_BEGINNING = -2
 
 """
     RD_KAFKA_OFFSET_END::Int
 
-Special offset value used by librdkafka to seek to the end of a partition.
+Special offset value: seek to the end of a partition (`-1`).
 """
 const RD_KAFKA_OFFSET_END = -1
+
+"""
+    RD_KAFKA_OFFSET_INVALID::Int
+
+Sentinel offset value indicating an invalid or unset offset (`-1001`).
+"""
+const RD_KAFKA_OFFSET_INVALID = -1001
 
 """
     DEFAULT_LOG_FORMAT::String

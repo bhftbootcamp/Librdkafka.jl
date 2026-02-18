@@ -1,28 +1,39 @@
+"""
+    KafkaConsumer(bootstrap_servers; group_id=nothing, config=Dict())
+
+Create a Kafka consumer connected to the given brokers.
+
+After creation, call [`subscribe!`](@ref) (group-based) or [`assign!`](@ref)
+(manual partition assignment) before calling [`poll`](@ref).
+
+# Example
+```julia
+c = KafkaConsumer("localhost:9092"; group_id="my-group",
+                  config=Dict(AUTO_OFFSET_RESET => "earliest"))
+subscribe!(c, ["my-topic"])
+records = poll(c; timeout_ms=1000)
+close(c)
+```
+"""
 mutable struct KafkaConsumer
     id::Int
     bootstrap_servers::String
     group_id::Union{Nothing,String}
     closed::Bool
-    log_mode::Symbol
+    subscription_log_mode::Symbol # :none | :subscribe | :assign
     subscribed_topics::Vector{Topic}
     assignment::Union{Nothing,Assignment}
 
-    function KafkaConsumer(bootstrap_servers::AbstractString; group_id::Union{Nothing,AbstractString}=nothing, config::AbstractDict=Dict())
-        bs = String(bootstrap_servers)
-        isempty(bs) && throw(ArgumentError("bootstrap_servers is empty."))
+    function KafkaConsumer(bootstrap_servers::AbstractString;
+                           group_id::Union{Nothing,AbstractString}=nothing,
+                           config::AbstractDict=Dict{String,String}())
         gid = group_id === nothing ? nothing : String(group_id)
-        props_id = _B.create_properties()
-        _B.properties_put(props_id, BOOTSTRAP_SERVERS, bs)
-        if gid !== nothing && !isempty(gid)
-            _B.properties_put(props_id, GROUP_ID, gid)
-        end
-        for (k, v) in config
-            _B.properties_put(props_id, string(k), string(v))
-        end
+        props_id = _build_properties(bootstrap_servers; group_id=gid, config=config)
         id = _B.create_kafka_consumer(props_id)
         id == 0 && throw(ErrorException("Failed to create KafkaConsumer (native returned null handle)."))
         _flush_native_logs!()
-        c = new(Int(id), bs, gid, false, :none, Topic[], nothing)
+        c = new(Int(id), String(bootstrap_servers), gid, false,
+                :none, Topic[], nothing)
         finalizer(close, c)
         return c
     end
@@ -32,7 +43,9 @@ Base.isopen(c::KafkaConsumer) = !c.closed
 
 function Base.show(io::IO, c::KafkaConsumer)
     group = c.group_id === nothing ? "no-group" : c.group_id
-    print(io, "KafkaConsumer(", c.bootstrap_servers, ", group=", group, ", id=", c.id, c.closed ? ", closed)" : ", open)")
+    state = c.closed ? "closed" : "open"
+    print(io, "KafkaConsumer(", c.bootstrap_servers,
+          ", group=", group, ", id=", c.id, ", ", state, ")")
 end
 
 @inline function _checkopen(c::KafkaConsumer)
@@ -41,7 +54,7 @@ end
 end
 
 @inline function _checkready(c::KafkaConsumer)
-    c.log_mode == :none && throw(ArgumentError("KafkaConsumer is not subscribed/assigned. Call subscribe!(...) or assign!(...) first."))
+    c.subscription_log_mode == :none && throw(ArgumentError("KafkaConsumer is not subscribed/assigned. Call subscribe!(...) or assign!(...) first."))
     return nothing
 end
 
@@ -53,28 +66,42 @@ function Base.close(c::KafkaConsumer)
     return nothing
 end
 
+"""
+    subscribe!(c::KafkaConsumer, topics)
+
+Subscribe to one or more topics using Kafka's group protocol.
+`topics` may be a `Vector{Topic}`, `Vector{String}`, or a single `String`.
+"""
 function subscribe!(c::KafkaConsumer, topics::Vector{Topic})
     _checkopen(c)
-    isempty(topics) && throw(ArgumentError("No topics provided."))
+    isempty(topics) && throw(ArgumentError("At least one topic is required."))
     names = [t.name for t in topics]
     topics_set = _B.make_topics_set(names)
     _B.consumer_subscribe(c.id, topics_set)
     _flush_native_logs!()
-    c.log_mode = :subscribe
+    c.subscription_log_mode = :subscribe
     c.subscribed_topics = topics
     c.assignment = nothing
     return c
 end
 
-subscribe!(c::KafkaConsumer, topics::AbstractVector{<:AbstractString}) = subscribe!(c, Topic.(topics))
-subscribe!(c::KafkaConsumer, topic::AbstractString) = subscribe!(c, [Topic(topic)])
+subscribe!(c::KafkaConsumer, topics::AbstractVector{<:AbstractString}) =
+    subscribe!(c, Topic.(topics))
+subscribe!(c::KafkaConsumer, topic::AbstractString) =
+    subscribe!(c, [Topic(topic)])
 
+"""
+    assign!(c::KafkaConsumer, assignment)
+    assign!(c, topic, partition; offset=RD_KAFKA_OFFSET_INVALID)
+
+Manually assign a specific topic-partition (and optional offset) to the consumer.
+"""
 function assign!(c::KafkaConsumer, a::Assignment)
     _checkopen(c)
     tp = a.topic_partition
     _B.consumer_assign(c.id, tp.topic.name, tp.partition.id, a.offset)
     _flush_native_logs!()
-    c.log_mode = :assign
+    c.subscription_log_mode = :assign
     c.subscribed_topics = Topic[]
     c.assignment = a
     return c
@@ -83,9 +110,16 @@ end
 assign!(c::KafkaConsumer, tp::TopicPartition; offset::Integer=RD_KAFKA_OFFSET_INVALID) =
     assign!(c, Assignment(tp; offset=offset))
 
-assign!(c::KafkaConsumer, topic::AbstractString, partition::Integer; offset::Integer=RD_KAFKA_OFFSET_INVALID) =
+assign!(c::KafkaConsumer, topic::AbstractString, partition::Integer;
+        offset::Integer=RD_KAFKA_OFFSET_INVALID) =
     assign!(c, TopicPartition(topic, partition); offset=offset)
 
+"""
+    poll(c::KafkaConsumer; timeout_ms=1000) -> Vector{ConsumerRecord}
+
+Poll for new messages. Returns an empty vector if nothing is available within
+`timeout_ms` milliseconds.
+"""
 function poll(c::KafkaConsumer; timeout_ms::Integer=1000)
     _checkopen(c)
     _checkready(c)
@@ -96,6 +130,11 @@ function poll(c::KafkaConsumer; timeout_ms::Integer=1000)
     return _parse_records(raw)
 end
 
+"""
+    commit(c::KafkaConsumer)
+
+Synchronously commit the current consumer offsets for all assigned partitions.
+"""
 function commit(c::KafkaConsumer)
     _checkopen(c)
     _checkready(c)
@@ -106,6 +145,12 @@ function commit(c::KafkaConsumer)
     return c
 end
 
+"""
+    commit_record(c::KafkaConsumer, record::ConsumerRecord)
+    commit_record(c, topic, partition, offset)
+
+Commit the offset of a specific record.
+"""
 function commit_record(c::KafkaConsumer, r::ConsumerRecord)
     _checkopen(c)
     _checkready(c)
@@ -117,6 +162,12 @@ end
 commit_record(c::KafkaConsumer, topic::AbstractString, partition::Integer, offset::Integer) =
     commit_record(c, ConsumerRecord(Topic(topic), Partition(partition), Int(offset), "", UInt8[], 0))
 
+"""
+    seek_to_beginning!(c, topic_partition)
+    seek_to_beginning!(c, topic, partition)
+
+Seek the consumer to the beginning of the given partition.
+"""
 function seek_to_beginning!(c::KafkaConsumer, tp::TopicPartition)
     _checkopen(c)
     _checkready(c)
@@ -128,6 +179,12 @@ end
 seek_to_beginning!(c::KafkaConsumer, topic::AbstractString, partition::Integer) =
     seek_to_beginning!(c, TopicPartition(topic, partition))
 
+"""
+    seek_to_end!(c, topic_partition)
+    seek_to_end!(c, topic, partition)
+
+Seek the consumer to the end (latest offset) of the given partition.
+"""
 function seek_to_end!(c::KafkaConsumer, tp::TopicPartition)
     _checkopen(c)
     _checkready(c)
@@ -139,4 +196,14 @@ end
 seek_to_end!(c::KafkaConsumer, topic::AbstractString, partition::Integer) =
     seek_to_end!(c, TopicPartition(topic, partition))
 
-log_level!(c::KafkaConsumer, level::Integer) = (_checkopen(c); _B.consumer_set_log_level(c.id, Int(level)); _flush_native_logs!(); c)
+"""
+    log_level!(c::KafkaConsumer, level::Integer) -> c
+
+Set the librdkafka log verbosity level (0–7) for this consumer.
+"""
+function log_level!(c::KafkaConsumer, level::Integer)
+    _checkopen(c)
+    _B.consumer_set_log_level(c.id, Int(level))
+    _flush_native_logs!()
+    return c
+end
