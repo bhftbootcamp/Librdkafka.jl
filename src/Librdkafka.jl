@@ -93,6 +93,7 @@ using .Bindings
 const _B = Bindings
 
 include("record_parser.jl")
+include("properties.jl")
 include("producer.jl")
 include("consumer.jl")
 include("logging.jl")

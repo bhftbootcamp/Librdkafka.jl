@@ -1,3 +1,10 @@
+"""
+    Bindings
+
+Thin Julia wrappers around the CxxWrap-generated native functions.  Every public
+function here maps 1-to-1 to a C++ export from `libkafka`.  The indirection
+through `_cpp_call` lets us cache function lookups and keeps call-sites concise.
+"""
 module Bindings
 
 export create_properties,

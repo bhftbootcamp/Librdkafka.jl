@@ -16,10 +16,14 @@ function _locate()
         path = normpath(joinpath(dir, _LIBNAME))
         isfile(path) && return path
     end
-    error("Could not locate $(_LIBNAME). Build first: cmake -S deps/src -B deps/src/build && cmake --build deps/src/build")
+    error(
+        "Could not locate $(_LIBNAME). " *
+        "Build first: cmake -S deps/src -B deps/src/build && cmake --build deps/src/build"
+    )
 end
 
 const _handles = Ptr{Nothing}[]
+
 function _preload_deps()
     isempty(_handles) || return
     for p in (librdkafka_jll.librdkafka_path, CyrusSASL_jll.libsasl2_path)
@@ -36,8 +40,14 @@ function __init__()
     @initcxx
 end
 
+"""
+    make_topics_set
+
+Convert a Julia string vector to a C++ `std::set<std::string>` for use with
+`consumer_subscribe`.
+"""
 function make_topics_set(topic_names::Vector{String})
-    StdSet = getfield(@__MODULE__, :StdSet)
+    StdSet    = getfield(@__MODULE__, :StdSet)
     StdString = getfield(@__MODULE__, :StdString)
     s = Base.invokelatest(StdSet{StdString})
     for t in topic_names
