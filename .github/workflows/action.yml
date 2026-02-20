@@ -129,7 +129,7 @@ runs:
         tar -czf "$asset" -C dist .
         echo "asset_path=$asset" >> "$GITHUB_OUTPUT"
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v6
       if: ${{ inputs.package-asset == 'true' }}
       with:
         name: ${{ inputs.artifact-name != '' && inputs.artifact-name || inputs.asset-name }}
