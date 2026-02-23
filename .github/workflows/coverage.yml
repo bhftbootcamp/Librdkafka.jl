@@ -1,7 +1,8 @@
-name: CI - Build and Test
+name: Coverage - Linux Julia 1.10
 
 on:
   push:
+    branches: [master]
     tags-ignore: ['**']
   pull_request:
     branches: [master]
@@ -20,8 +21,10 @@ jobs:
     name: Load Workflow Config
     runs-on: ubuntu-24.04
     outputs:
-      build_matrix: ${{ steps.config.outputs.build_matrix }}
       ci_filters: ${{ steps.config.outputs.ci_filters }}
+      coverage_julia_version: ${{ steps.config.outputs.coverage_julia_version }}
+      coverage_julia_arch: ${{ steps.config.outputs.coverage_julia_arch }}
+      coverage_lib_ext: ${{ steps.config.outputs.coverage_lib_ext }}
     steps:
       - uses: actions/checkout@v6
       - name: Cache pip
@@ -36,20 +39,22 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import json
           import os
           from pathlib import Path
           import yaml
 
           cfg = yaml.safe_load(Path(".github/workflow-config.yml").read_text(encoding="utf-8"))
+          cov = cfg["coverage"]
           out = Path(os.environ["GITHUB_OUTPUT"])
           with out.open("a", encoding="utf-8") as f:
-              f.write(f"build_matrix={json.dumps(cfg['build_matrix'])}\n")
               f.write("ci_filters<<EOF\n")
               f.write("relevant:\n")
               for p in cfg["ci_paths"]:
                   f.write(f"  - '{p}'\n")
               f.write("EOF\n")
+              f.write(f"coverage_julia_version={cov['julia_version']}\n")
+              f.write(f"coverage_julia_arch={cov['julia_arch']}\n")
+              f.write(f"coverage_lib_ext={cov['lib_ext']}\n")
           PY
 
   changes:
@@ -67,33 +72,36 @@ jobs:
         with:
           filters: ${{ needs.config.outputs.ci_filters }}
 
-  build_test:
-    name: Build and Test
+  coverage:
+    name: Coverage (Linux, Julia 1.10)
     needs: [config, changes]
     if: ${{ needs.changes.outputs.relevant == 'true' }}
-    runs-on: ${{ matrix.platform.os }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       actions: write
       contents: read
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.config.outputs.build_matrix) }}
     steps:
       - uses: actions/checkout@v6
-      - name: Build and test
+      - name: build-native-wrapper
         uses: ./.github/actions/build-test
         with:
-          julia-version: ${{ matrix.julia }}
-          julia-arch: ${{ matrix.platform.arch }}
-          lib-ext: ${{ matrix.platform.lib_ext }}
-          run-precompile: 'true'
-          run-tests: 'true'
+          julia-version: ${{ needs.config.outputs.coverage_julia_version }}
+          julia-arch: ${{ needs.config.outputs.coverage_julia_arch }}
+          lib-ext: ${{ needs.config.outputs.coverage_lib_ext }}
+          run-precompile: 'false'
+          run-tests: 'false'
+      - name: run-tests-with-coverage
+        run: julia --project=. -e 'using Pkg; Pkg.test(coverage=true)'
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
 
   gate:
-    name: CI Gate
+    name: Coverage Gate
     runs-on: ubuntu-24.04
-    needs: [config, changes, build_test]
+    needs: [config, changes, coverage]
     if: ${{ always() }}
     steps:
       - name: Decide
@@ -101,14 +109,14 @@ jobs:
         run: |
           set -euo pipefail
           echo "relevant_changes=${{ needs.changes.outputs.relevant }}"
-          echo "build_test_result=${{ needs.build_test.result }}"
+          echo "coverage_result=${{ needs.coverage.result }}"
 
           if [[ "${{ needs.changes.outputs.relevant }}" == "true" ]]; then
-            if [[ "${{ needs.build_test.result }}" != "success" ]]; then
-              echo "ERROR: build/test failed"
+            if [[ "${{ needs.coverage.result }}" != "success" ]]; then
+              echo "ERROR: coverage failed"
               exit 1
             fi
-            echo "OK: build/test passed"
+            echo "OK: coverage passed"
           else
-            echo "OK: no relevant changes; build/test skipped"
+            echo "OK: no relevant changes; coverage skipped"
           fi

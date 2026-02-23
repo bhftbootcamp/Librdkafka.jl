@@ -1,8 +1,7 @@
-name: Documentation
+name: Documentation - Build and Publish
 
 on:
   push:
-    branches: [master]
     tags: ['v*.*.*']
   pull_request:
     branches: [master]
@@ -13,8 +12,58 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
+  config:
+    name: Load Workflow Config
+    runs-on: ubuntu-24.04
+    outputs:
+      docs_filters: ${{ steps.config.outputs.docs_filters }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-pyyaml-v1
+      - name: Install PyYAML
+        shell: bash
+        run: python3 -m pip install --disable-pip-version-check --quiet pyyaml
+      - id: config
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          cfg = yaml.safe_load(Path(".github/workflow-config.yml").read_text(encoding="utf-8"))
+          out = Path(os.environ["GITHUB_OUTPUT"])
+          with out.open("a", encoding="utf-8") as f:
+              f.write("docs_filters<<EOF\n")
+              f.write("relevant:\n")
+              for p in cfg["docs_paths"]:
+                  f.write(f"  - '{p}'\n")
+              f.write("EOF\n")
+          PY
+
+  changes:
+    name: Detect Docs-Relevant Changes
+    needs: config
+    runs-on: ubuntu-24.04
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: ${{ needs.config.outputs.docs_filters }}
+
   docs:
-    name: Build and deploy docs
+    name: Build and Deploy Docs
+    needs: [config, changes]
+    if: ${{ needs.changes.outputs.relevant == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -30,7 +79,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate tag format
+      - name: Validate Tag Format
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         run: |
           set -euo pipefail
@@ -40,7 +89,7 @@ jobs:
             exit 1
           fi
 
-      - name: Build native wrapper (required for 'using Librdkafka')
+      - name: Build Native Wrapper
         uses: ./.github/actions/build-test
         with:
           julia-version: '1.10'
@@ -50,10 +99,10 @@ jobs:
           run-tests: 'false'
           package-asset: 'false'
 
-      - name: Install docs dependencies
+      - name: Install Docs Dependencies
         run: julia --project=docs/ -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
 
-      - name: Build and deploy
+      - name: Build and Deploy
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: julia --project=docs/ docs/make.jl

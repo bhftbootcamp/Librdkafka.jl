@@ -1,12 +1,12 @@
-name: CompatHelper
+name: Dependencies - Compat Helper
 
 on:
   schedule:
-    - cron: 0 0 * * *
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
-  CompatHelper:
+  compat-helper:
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -19,7 +19,7 @@ jobs:
           registry: bhftbootcamp/Green
       - uses: julia-actions/setup-julia@v2
       - uses: julia-actions/cache@v2
-      - name: Configure CompatHelper
+      - name: Run CompatHelper
         run: |
           julia -e '
             using Pkg
@@ -28,4 +28,4 @@ jobs:
             CompatHelper.main(use_existing_registries = true)
           '
         env:
-          GITHUB_TOKEN: ${{ github.token }} # Token required to create a pull request to the same repository
+          GITHUB_TOKEN: ${{ github.token }}
