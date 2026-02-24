@@ -1,0 +1,28 @@
+build_matrix:
+  julia: ["1.10", "1.11", "1.12"]
+  platform:
+    - os: ubuntu-24.04
+      arch: x64
+      platform: linux-x86_64
+      lib_ext: so
+    - os: macos-15
+      arch: arm64
+      platform: macos-aarch64
+      lib_ext: dylib
+
+ci_paths:
+  - deps/**
+  - src/**
+  - test/**
+  - Project.toml
+
+docs_paths:
+  - docs/**
+  - src/**
+  - deps/**
+  - Project.toml
+
+coverage:
+  julia_version: "1.10"
+  julia_arch: x64
+  lib_ext: so

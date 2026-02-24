@@ -1,0 +1,31 @@
+name: Dependencies - Compat Helper
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  compat-helper:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: julia-actions/add-julia-registry@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          registry: bhftbootcamp/Green
+      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/cache@v2
+      - name: Run CompatHelper
+        run: |
+          julia -e '
+            using Pkg
+            Pkg.add("CompatHelper")
+            using CompatHelper
+            CompatHelper.main(use_existing_registries = true)
+          '
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

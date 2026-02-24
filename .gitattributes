@@ -1,0 +1,46 @@
+* text=auto eol=lf
+
+*.jl text
+*.md text
+*.toml text
+*.yml text
+*.yaml text
+*.json text
+*.sh text
+*.txt text
+*.rst text
+*.ini text
+*.cfg text
+*.conf text
+*.c text
+*.cc text
+*.cpp text
+*.h text
+*.hh text
+*.hpp text
+*.cmake text
+*.mk text
+Makefile text
+
+*.cpp linguist-language=C++
+*.h linguist-language=C++
+deps/src/** linguist-vendored=false linguist-generated=false linguist-detectable=true
+deps/include/** linguist-vendored=false linguist-generated=false linguist-detectable=true
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.bz2 binary
+*.xz binary
+*.7z binary
+*.tar binary
+*.so binary
+*.dylib binary
+*.dll binary
+*.a binary
+*.o binary
+*.wasm binary

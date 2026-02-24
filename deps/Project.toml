@@ -1,0 +1,4 @@
+[deps]
+EasyCurl = "5dc68c43-2cae-45c1-9c9f-30d6e2b9e002"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"

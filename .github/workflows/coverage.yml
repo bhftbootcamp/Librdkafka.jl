@@ -1,0 +1,122 @@
+name: Coverage - Linux Julia 1.10
+
+on:
+  push:
+    branches: [master]
+    tags-ignore: ['**']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  config:
+    name: Load Workflow Config
+    runs-on: ubuntu-24.04
+    outputs:
+      ci_filters: ${{ steps.config.outputs.ci_filters }}
+      coverage_julia_version: ${{ steps.config.outputs.coverage_julia_version }}
+      coverage_julia_arch: ${{ steps.config.outputs.coverage_julia_arch }}
+      coverage_lib_ext: ${{ steps.config.outputs.coverage_lib_ext }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-pyyaml-v1
+      - name: Install PyYAML
+        shell: bash
+        run: python3 -m pip install --disable-pip-version-check --quiet pyyaml
+      - id: config
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          cfg = yaml.safe_load(Path(".github/workflow-config.yml").read_text(encoding="utf-8"))
+          cov = cfg["coverage"]
+          out = Path(os.environ["GITHUB_OUTPUT"])
+          with out.open("a", encoding="utf-8") as f:
+              f.write("ci_filters<<EOF\n")
+              f.write("relevant:\n")
+              for p in cfg["ci_paths"]:
+                  f.write(f"  - '{p}'\n")
+              f.write("EOF\n")
+              f.write(f"coverage_julia_version={cov['julia_version']}\n")
+              f.write(f"coverage_julia_arch={cov['julia_arch']}\n")
+              f.write(f"coverage_lib_ext={cov['lib_ext']}\n")
+          PY
+
+  changes:
+    name: Detect Relevant Changes
+    needs: config
+    runs-on: ubuntu-24.04
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: ${{ needs.config.outputs.ci_filters }}
+
+  coverage:
+    name: Coverage (Linux, Julia 1.10)
+    needs: [config, changes]
+    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: build-native-wrapper
+        uses: ./.github/actions/build-test
+        with:
+          julia-version: ${{ needs.config.outputs.coverage_julia_version }}
+          julia-arch: ${{ needs.config.outputs.coverage_julia_arch }}
+          lib-ext: ${{ needs.config.outputs.coverage_lib_ext }}
+          run-precompile: 'false'
+          run-tests: 'false'
+      - name: run-tests-with-coverage
+        run: julia --project=. -e 'using Pkg; Pkg.test(coverage=true)'
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+
+  gate:
+    name: Coverage Gate
+    runs-on: ubuntu-24.04
+    needs: [config, changes, coverage]
+    if: ${{ always() }}
+    steps:
+      - name: Decide
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "relevant_changes=${{ needs.changes.outputs.relevant }}"
+          echo "coverage_result=${{ needs.coverage.result }}"
+
+          if [[ "${{ needs.changes.outputs.relevant }}" == "true" ]]; then
+            if [[ "${{ needs.coverage.result }}" != "success" ]]; then
+              echo "ERROR: coverage failed"
+              exit 1
+            fi
+            echo "OK: coverage passed"
+          else
+            echo "OK: no relevant changes; coverage skipped"
+          fi

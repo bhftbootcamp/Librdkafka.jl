@@ -1,0 +1,108 @@
+name: Documentation - Build and Publish
+
+on:
+  push:
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  config:
+    name: Load Workflow Config
+    runs-on: ubuntu-24.04
+    outputs:
+      docs_filters: ${{ steps.config.outputs.docs_filters }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-pyyaml-v1
+      - name: Install PyYAML
+        shell: bash
+        run: python3 -m pip install --disable-pip-version-check --quiet pyyaml
+      - id: config
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          cfg = yaml.safe_load(Path(".github/workflow-config.yml").read_text(encoding="utf-8"))
+          out = Path(os.environ["GITHUB_OUTPUT"])
+          with out.open("a", encoding="utf-8") as f:
+              f.write("docs_filters<<EOF\n")
+              f.write("relevant:\n")
+              for p in cfg["docs_paths"]:
+                  f.write(f"  - '{p}'\n")
+              f.write("EOF\n")
+          PY
+
+  changes:
+    name: Detect Docs-Relevant Changes
+    needs: config
+    runs-on: ubuntu-24.04
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: ${{ needs.config.outputs.docs_filters }}
+
+  docs:
+    name: Build and Deploy Docs
+    needs: [config, changes]
+    if: ${{ needs.changes.outputs.relevant == 'true' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: write
+      contents: write
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate Tag Format
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: invalid tag format: $tag"
+            exit 1
+          fi
+
+      - name: Build Native Wrapper
+        uses: ./.github/actions/build-test
+        with:
+          julia-version: '1.10'
+          julia-arch: x64
+          lib-ext: so
+          run-precompile: 'false'
+          run-tests: 'false'
+          package-asset: 'false'
+
+      - name: Install Docs Dependencies
+        run: julia --project=docs/ -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+
+      - name: Build and Deploy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: julia --project=docs/ docs/make.jl
