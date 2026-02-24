@@ -3,7 +3,6 @@ name: Release - Build and Publish Assets
 on:
   push:
     branches: [master]
-    tags: ['v*.*.*']
 
 concurrency:
   group: release-${{ github.ref }}
@@ -66,43 +65,29 @@ jobs:
             fi
           fi
 
+          if [[ "${GITHUB_REF_NAME}" != "master" ]]; then
+            echo "ERROR: unsupported ref for release workflow: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
           release_enabled="false"
           tag_action="none"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            current_tag="${GITHUB_REF_NAME}"
-            if [[ ! "$current_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "ERROR: invalid tag format: $current_tag"
-              exit 1
-            fi
-            if [[ "$current_tag" != "$tag" ]]; then
-              echo "ERROR: tag ($current_tag) does not match Project.toml version ($tag)"
-              exit 1
-            fi
-
-            tag_commit="$(git rev-list -n 1 "$current_tag")"
-            if ! git merge-base --is-ancestor "$tag_commit" origin/master; then
-              echo "ERROR: tag $current_tag points to commit not reachable from master"
-              echo "tag_commit=$tag_commit"
-              echo "origin/master=$(git rev-parse origin/master)"
-              exit 1
-            fi
-            release_enabled="true"
-            tag_action="tag_run_release_enabled"
-          else
-            if [[ "${GITHUB_REF_NAME}" != "master" ]]; then
-              echo "ERROR: unsupported ref for release workflow: ${GITHUB_REF_NAME}"
-              exit 1
-            fi
-
-            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-              echo "Tag $tag already exists; skipping tag creation."
-              tag_action="tag_already_exists"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            tag_commit="$(git rev-list -n 1 "$tag")"
+            if [[ "$tag_commit" == "$GITHUB_SHA" ]]; then
+              echo "Tag $tag already exists on current commit; skipping release."
+              tag_action="tag_already_exists_current_commit"
             else
-              git tag "$tag" "$GITHUB_SHA"
-              git push origin "$tag"
-              echo "Created and pushed release tag: $tag"
-              tag_action="tag_created"
+              echo "ERROR: tag $tag already exists on different commit ($tag_commit)"
+              echo "current_commit=$GITHUB_SHA"
+              exit 1
             fi
+          else
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "$tag"
+            echo "Created and pushed release tag: $tag"
+            tag_action="tag_created"
+            release_enabled="true"
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -117,11 +102,12 @@ jobs:
             echo "- Target tag: ${tag}"
             echo "- Tag action: ${tag_action}"
             echo "- Release enabled (current run): ${release_enabled}"
+            echo "- Note: release runs in this master pipeline when a new tag is created"
           } >> "$GITHUB_STEP_SUMMARY"
 
   config:
     name: Load Workflow Config
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ needs.prepare_release.outputs.release_enabled == 'true' }}
     runs-on: ubuntu-24.04
     outputs:
       build_matrix: ${{ steps.config.outputs.build_matrix }}
@@ -152,7 +138,7 @@ jobs:
 
   build_test_package:
     name: Build, Test, and Package
-    if: ${{ startsWith(github.ref, 'refs/tags/') && needs.prepare_release.outputs.release_enabled == 'true' }}
+    if: ${{ needs.prepare_release.outputs.release_enabled == 'true' }}
     needs: [prepare_release, config]
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 60
@@ -178,7 +164,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    if: ${{ startsWith(github.ref, 'refs/tags/') && needs.prepare_release.outputs.release_enabled == 'true' }}
+    if: ${{ needs.prepare_release.outputs.release_enabled == 'true' }}
     needs: [prepare_release, build_test_package]
     runs-on: ubuntu-24.04
     permissions:
@@ -203,7 +189,7 @@ jobs:
 
   register:
     name: Update Registry
-    if: ${{ startsWith(github.ref, 'refs/tags/') && needs.prepare_release.outputs.release_enabled == 'true' }}
+    if: ${{ needs.prepare_release.outputs.release_enabled == 'true' }}
     needs: [prepare_release, publish]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
