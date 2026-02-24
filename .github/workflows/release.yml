@@ -107,6 +107,7 @@ jobs:
 
   config:
     name: Load Workflow Config
+    needs: prepare_release
     if: ${{ needs.prepare_release.outputs.release_enabled == 'true' }}
     runs-on: ubuntu-24.04
     outputs:
