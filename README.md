@@ -132,6 +132,7 @@ end
 - [librdkafka](https://github.com/confluentinc/librdkafka) – Official library repository.
 - [librdkafka_jll](https://github.com/JuliaBinaryWrappers/librdkafka_jll.jl) – Julia binary wrapper for librdkafka.
 - [modern-cpp-kafka](https://github.com/morganstanley/modern-cpp-kafka) – a layer of C++ wrapper based on librdkafka.
+- [doc kafka-clients](https://docs.confluent.io/kafka-clients/python/current/overview.html) – configuration refers to the various settings and parameters that can be adjusted to optimize the performance, reliability, and security of a Kafka cluster and its clients.
 
 ## Contributing
 
