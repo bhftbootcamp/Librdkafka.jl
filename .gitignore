@@ -54,5 +54,8 @@ docs/site/
 # environment.
 Manifest.toml
 
+# Claude Code
+.claude/
+
 # Intentionally invisible files
 _*

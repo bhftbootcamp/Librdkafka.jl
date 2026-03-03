@@ -39,8 +39,8 @@ end
 function _flush_native_logs!()
     try
         _drain_native_logs!()
-    catch
-        # Swallow errors so that log draining never interrupts user operations.
+    catch ex
+        @debug "Failed to drain native logs" exception=(ex, catch_backtrace())
     end
     return nothing
 end

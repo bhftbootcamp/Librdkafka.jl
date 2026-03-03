@@ -205,10 +205,11 @@ kafka::clients::LogCallback& global_log_callback()
 JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
 {
 
+    static std::mutex store_mutex;
     static std::map<int, std::shared_ptr<kafka::Properties>> properties_store;
     static std::map<int, std::shared_ptr<kafka::clients::producer::KafkaProducer>> producer_store;
     static std::map<int, std::shared_ptr<kafka::clients::consumer::KafkaConsumer>> consumer_store;
-    static int next_id = 1;
+    static std::atomic<int> next_id{1};
 
     (void)jlcxx::julia_type<std::vector<std::string>>();
 
@@ -216,27 +217,33 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
 
     mod.method("create_properties", []() -> int {
         int id = next_id++;
+        std::lock_guard<std::mutex> guard(store_mutex);
         properties_store[id] = std::make_shared<kafka::Properties>();
         properties_store[id]->put("log_cb", global_log_callback());
         return id;
     });
 
     mod.method("properties_put", [](int props_id, const std::string& key, const std::string& value) {
-        if (properties_store.count(props_id)) {
-            properties_store[props_id]->put(key, value);
+        std::lock_guard<std::mutex> guard(store_mutex);
+        if (!properties_store.count(props_id)) {
+            throw std::runtime_error("Properties handle not found. It may have been consumed or is invalid.");
         }
+        properties_store[props_id]->put(key, value);
     });
     mod.method("create_kafka_producer", [](int props_id) -> int {
+        std::lock_guard<std::mutex> guard(store_mutex);
         if (!properties_store.count(props_id)) return 0;
         if (!properties_store[props_id]->contains("log_cb")) {
             properties_store[props_id]->put("log_cb", global_log_callback());
         }
         int id = next_id++;
         producer_store[id] = std::make_shared<kafka::clients::producer::KafkaProducer>(*properties_store[props_id]);
+        properties_store.erase(props_id);
         return id;
     });
 
     mod.method("producer_close", [](int producer_id) -> bool {
+        std::lock_guard<std::mutex> guard(store_mutex);
         auto it = producer_store.find(producer_id);
         if (it == producer_store.end()) {
             return false;
@@ -250,6 +257,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("producer_set_log_level", [](int producer_id, int level) -> bool {
+        std::lock_guard<std::mutex> guard(store_mutex);
         if (!producer_store.count(producer_id)) {
             return false;
         }
@@ -337,26 +345,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
 
     mod.method("produce", [](int producer_id, const std::string& topic, int partition,
                             const std::string& key, jlcxx::ArrayRef<uint8_t> value) -> std::string {
-        if (!producer_store.count(producer_id)) {
-            return "KafkaProducer handle not found. It may be closed or invalid.";
-        }
-        kafka::clients::producer::ProducerRecord record(
-            topic, kafka::Partition(partition),
-            kafka::Key(key.data(), key.size()),
-            kafka::Value(value.data(), value.size())
-        );
-        try {
-            producer_store[producer_id]->syncSend(record);
-            return "";
-        } catch (const std::exception& e) {
-            return e.what();
-        } catch (...) {
-            return "Unknown exception";
-        }
-    });
-
-    mod.method("produce_binary", [](int producer_id, const std::string& topic, int partition,
-                                   const std::string& key, jlcxx::ArrayRef<uint8_t> value) -> std::string {
+        std::lock_guard<std::mutex> guard(store_mutex);
         if (!producer_store.count(producer_id)) {
             return "KafkaProducer handle not found. It may be closed or invalid.";
         }
@@ -376,16 +365,19 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("create_kafka_consumer", [](int props_id) -> int {
+        std::lock_guard<std::mutex> guard(store_mutex);
         if (!properties_store.count(props_id)) return 0;
         if (!properties_store[props_id]->contains("log_cb")) {
             properties_store[props_id]->put("log_cb", global_log_callback());
         }
         int id = next_id++;
         consumer_store[id] = std::make_shared<kafka::clients::consumer::KafkaConsumer>(*properties_store[props_id]);
+        properties_store.erase(props_id);
         return id;
     });
 
     mod.method("consumer_set_log_level", [](int consumer_id, int level) -> bool {
+        std::lock_guard<std::mutex> guard(store_mutex);
         if (!consumer_store.count(consumer_id)) {
             return false;
         }
@@ -394,12 +386,15 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("consumer_subscribe", [](int consumer_id, const std::set<std::string>& topics) {
-        if (consumer_store.count(consumer_id)) {
-            consumer_store[consumer_id]->subscribe(topics);
+        std::lock_guard<std::mutex> guard(store_mutex);
+        if (!consumer_store.count(consumer_id)) {
+            throw std::runtime_error("KafkaConsumer handle not found. It may be closed or invalid.");
         }
+        consumer_store[consumer_id]->subscribe(topics);
     });
 
     mod.method("consumer_poll_raw", [](int consumer_id, int timeout_ms) -> std::vector<std::uint8_t> {
+        std::lock_guard<std::mutex> guard(store_mutex);
         if (!consumer_store.count(consumer_id)) {
             throw std::runtime_error("KafkaConsumer handle not found. It may be closed or invalid.");
         }
@@ -448,14 +443,16 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("consumer_commit_sync", [](int consumer_id) -> int {
-        if (consumer_store.count(consumer_id)) {
-            consumer_store[consumer_id]->commitSync();
-            return 0;
+        std::lock_guard<std::mutex> guard(store_mutex);
+        if (!consumer_store.count(consumer_id)) {
+            return -1;
         }
-        return -1;
+        consumer_store[consumer_id]->commitSync();
+        return 0;
     });
 
     mod.method("consumer_close", [](int consumer_id) -> bool {
+        std::lock_guard<std::mutex> guard(store_mutex);
         auto it = consumer_store.find(consumer_id);
         if (it == consumer_store.end()) {
             return false;
@@ -470,36 +467,44 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
 
 
     mod.method("consumer_assign", [](int consumer_id, const std::string& topic, int partition, long long offset) {
-        if (consumer_store.count(consumer_id)) {
-            kafka::TopicPartitionOffsets tpos;
-            tpos[kafka::TopicPartition(topic, partition)] = offset;
-            consumer_store[consumer_id]->assign(kafka::TopicPartitions{tpos.begin()->first});
-            if (offset != RD_KAFKA_OFFSET_INVALID) {
-                consumer_store[consumer_id]->seek(kafka::TopicPartition(topic, partition), offset);
-            }
+        std::lock_guard<std::mutex> guard(store_mutex);
+        if (!consumer_store.count(consumer_id)) {
+            throw std::runtime_error("KafkaConsumer handle not found. It may be closed or invalid.");
+        }
+        kafka::TopicPartitionOffsets tpos;
+        tpos[kafka::TopicPartition(topic, partition)] = offset;
+        consumer_store[consumer_id]->assign(kafka::TopicPartitions{tpos.begin()->first});
+        if (offset != RD_KAFKA_OFFSET_INVALID) {
+            consumer_store[consumer_id]->seek(kafka::TopicPartition(topic, partition), offset);
         }
     });
 
     mod.method("consumer_seek_to_beginning", [](int consumer_id, const std::string& topic, int partition) {
-        if (consumer_store.count(consumer_id)) {
-            kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
-            consumer_store[consumer_id]->seekToBeginning(partitions);
+        std::lock_guard<std::mutex> guard(store_mutex);
+        if (!consumer_store.count(consumer_id)) {
+            throw std::runtime_error("KafkaConsumer handle not found. It may be closed or invalid.");
         }
+        kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
+        consumer_store[consumer_id]->seekToBeginning(partitions);
     });
 
     mod.method("consumer_seek_to_end", [](int consumer_id, const std::string& topic, int partition) {
-        if (consumer_store.count(consumer_id)) {
-            kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
-            consumer_store[consumer_id]->seekToEnd(partitions);
+        std::lock_guard<std::mutex> guard(store_mutex);
+        if (!consumer_store.count(consumer_id)) {
+            throw std::runtime_error("KafkaConsumer handle not found. It may be closed or invalid.");
         }
+        kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
+        consumer_store[consumer_id]->seekToEnd(partitions);
     });
 
     mod.method("consumer_commit_record", [](int consumer_id, const std::string& topic, int partition, long long offset) {
-        if (consumer_store.count(consumer_id)) {
-            kafka::TopicPartitionOffsets tpos;
-            tpos[kafka::TopicPartition(topic, partition)] = offset + 1;
-            consumer_store[consumer_id]->commitSync(tpos);
+        std::lock_guard<std::mutex> guard(store_mutex);
+        if (!consumer_store.count(consumer_id)) {
+            throw std::runtime_error("KafkaConsumer handle not found. It may be closed or invalid.");
         }
+        kafka::TopicPartitionOffsets tpos;
+        tpos[kafka::TopicPartition(topic, partition)] = offset + 1;
+        consumer_store[consumer_id]->commitSync(tpos);
     });
 }
 
