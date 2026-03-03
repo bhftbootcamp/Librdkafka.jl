@@ -47,7 +47,7 @@ function _parse_one_record!(c::_Cursor)
     topic_len_u, i = _read_u32_le(raw, i)
     topic_len = Int(topic_len_u)
     i + topic_len - 1 <= n || _parse_error("unexpected end", i)
-    topic = topic_len == 0 ? "" : String(Vector{UInt8}(raw[i:(i + topic_len - 1)]))
+    topic = topic_len == 0 ? "" : String(copy(@view raw[i:(i + topic_len - 1)]))
     i += topic_len
 
     partition_i32, i = _read_i32_le(raw, i)
@@ -60,13 +60,13 @@ function _parse_one_record!(c::_Cursor)
     key_len_u, i = _read_u32_le(raw, i)
     key_len = Int(key_len_u)
     i + key_len - 1 <= n || _parse_error("unexpected end", i)
-    key = key_len == 0 ? "" : String(Vector{UInt8}(raw[i:(i + key_len - 1)]))
+    key = key_len == 0 ? "" : String(copy(@view raw[i:(i + key_len - 1)]))
     i += key_len
 
     value_len_u, i = _read_u32_le(raw, i)
     value_len = Int(value_len_u)
     i + value_len - 1 <= n || _parse_error("unexpected end", i)
-    value = value_len == 0 ? UInt8[] : Vector{UInt8}(raw[i:(i + value_len - 1)])
+    value = value_len == 0 ? UInt8[] : copy(@view raw[i:(i + value_len - 1)])
     i += value_len
 
     c.i = i

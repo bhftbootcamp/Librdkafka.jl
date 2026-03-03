@@ -11,6 +11,7 @@ export BOOTSTRAP_SERVERS,
 
 export KafkaProducer, KafkaConsumer
 export Topic, Partition, TopicPartition, Assignment, ConsumerRecord
+export KafkaClientError, KafkaError
 
 export produce
 export subscribe!, assign!
@@ -85,8 +86,10 @@ function Base.show(io::IO, r::ConsumerRecord)
           ", key=\"", r.key, "\", value_bytes=", length(r.value), ", ts=", ts, ")")
 end
 
+include("errors.jl")
+
 @noinline _closed(kind::Symbol, id::Int) =
-    throw(InvalidStateException("$(kind) is closed (id=$(id)).", :closed))
+    _throw_error(:state, kind, "$(kind) is closed (id=$(id))."; details=_details(:reason => "closed"))
 
 include("ffi/bindings.jl")
 using .Bindings

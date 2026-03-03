@@ -22,7 +22,7 @@ mutable struct KafkaConsumer
     closed::Bool
     subscription_log_mode::Symbol # :none | :subscribe | :assign
     subscribed_topics::Vector{Topic}
-    assignment::Union{Nothing,Assignment}
+    assignments::Vector{Assignment}
 
     function KafkaConsumer(bootstrap_servers::AbstractString;
                            group_id::Union{Nothing,AbstractString}=nothing,
@@ -31,9 +31,9 @@ mutable struct KafkaConsumer
         props_id = _build_properties(bootstrap_servers; group_id=gid, config=config)
         id = _B.create_kafka_consumer(props_id)
         bs = String(bootstrap_servers)
-        id == 0 && throw(ErrorException("Failed to create KafkaConsumer (native returned null handle)."))
+        id == 0 && _throw_error(:state, :create_consumer, "Failed to create KafkaConsumer (native returned null handle).")
         _flush_native_logs!()
-        c = new(Int(id), bs, gid, false, :none, Topic[], nothing)
+        c = new(Int(id), bs, gid, false, :none, Topic[], Assignment[])
         finalizer(close, c)
         return c
     end
@@ -77,11 +77,12 @@ function subscribe!(c::KafkaConsumer, topics::Vector{Topic})
     isempty(topics) && throw(ArgumentError("At least one topic is required."))
     names = [t.name for t in topics]
     topics_set = _B.make_topics_set(names)
-    _B.consumer_subscribe(c.id, topics_set)
+    ok = _B.consumer_subscribe(c.id, topics_set)
     _flush_native_logs!()
+    ok || _throw_error(:state, :consumer_subscribe, "Consumer handle is invalid (maybe closed).")
     c.subscription_log_mode = :subscribe
     c.subscribed_topics = topics
-    c.assignment = nothing
+    c.assignments = Assignment[]
     return c
 end
 
@@ -93,18 +94,32 @@ subscribe!(c::KafkaConsumer, topic::AbstractString) =
 """
     assign!
 
-Manually assign a specific topic-partition (and optional offset) to the consumer.
+Manually assign one or more topic-partitions (with optional offsets) to the consumer.
 """
-function assign!(c::KafkaConsumer, a::Assignment)
+function assign!(c::KafkaConsumer, assignments::AbstractVector{Assignment})
     _checkopen(c)
-    tp = a.topic_partition
-    _B.consumer_assign(c.id, tp.topic.name, tp.partition.id, a.offset)
+    isempty(assignments) && throw(ArgumentError("At least one assignment is required."))
+
+    topics = String[]
+    partitions = Int[]
+    offsets = Int64[]
+    for a in assignments
+        tp = a.topic_partition
+        push!(topics, tp.topic.name)
+        push!(partitions, tp.partition.id)
+        push!(offsets, Int64(a.offset))
+    end
+
+    ok = _B.consumer_assign_many(c.id, topics, partitions, offsets)
     _flush_native_logs!()
+    ok || _throw_error(:state, :consumer_assign, "Consumer handle is invalid (maybe closed).")
     c.subscription_log_mode = :assign
     c.subscribed_topics = Topic[]
-    c.assignment = a
+    c.assignments = collect(assignments)
     return c
 end
+
+assign!(c::KafkaConsumer, a::Assignment) = assign!(c, [a])
 
 assign!(c::KafkaConsumer, tp::TopicPartition; offset::Integer=RD_KAFKA_OFFSET_INVALID) =
     assign!(c, Assignment(tp; offset=offset))
@@ -139,8 +154,9 @@ function commit(c::KafkaConsumer)
     _checkready(c)
     err = _B.consumer_commit_sync(c.id)
     _flush_native_logs!()
-    err == -1 && throw(InvalidStateException("Consumer handle is invalid (maybe closed).", :closed))
-    err != 0 && throw(ErrorException("Offset commit failed (error_code=$(err))."))
+    err == -1 && _throw_error(:state, :consumer_commit, "Consumer handle is invalid (maybe closed).")
+    err != 0 && _throw_error(:operation, :consumer_commit, "Offset commit failed.",
+        details=_details(:error_code => err))
     return c
 end
 
@@ -152,8 +168,9 @@ Commit the offset of a specific record.
 function commit_record(c::KafkaConsumer, r::ConsumerRecord)
     _checkopen(c)
     _checkready(c)
-    _B.consumer_commit_record(c.id, r.topic.name, r.partition.id, r.offset)
+    ok = _B.consumer_commit_record(c.id, r.topic.name, r.partition.id, r.offset)
     _flush_native_logs!()
+    ok || _throw_error(:state, :consumer_commit_record, "Consumer handle is invalid (maybe closed).")
     return c
 end
 
@@ -168,8 +185,9 @@ Seek the consumer to the beginning of the given partition.
 function seek_to_beginning!(c::KafkaConsumer, tp::TopicPartition)
     _checkopen(c)
     _checkready(c)
-    _B.consumer_seek_to_beginning(c.id, tp.topic.name, tp.partition.id)
+    ok = _B.consumer_seek_to_beginning(c.id, tp.topic.name, tp.partition.id)
     _flush_native_logs!()
+    ok || _throw_error(:state, :consumer_seek_to_beginning, "Consumer handle is invalid (maybe closed).")
     return c
 end
 
@@ -184,8 +202,9 @@ Seek the consumer to the end (latest offset) of the given partition.
 function seek_to_end!(c::KafkaConsumer, tp::TopicPartition)
     _checkopen(c)
     _checkready(c)
-    _B.consumer_seek_to_end(c.id, tp.topic.name, tp.partition.id)
+    ok = _B.consumer_seek_to_end(c.id, tp.topic.name, tp.partition.id)
     _flush_native_logs!()
+    ok || _throw_error(:state, :consumer_seek_to_end, "Consumer handle is invalid (maybe closed).")
     return c
 end
 
@@ -199,7 +218,8 @@ Set the librdkafka log verbosity level (0-7) for this consumer.
 """
 function log_level!(c::KafkaConsumer, level::Integer)
     _checkopen(c)
-    _B.consumer_set_log_level(c.id, Int(level))
+    ok = _B.consumer_set_log_level(c.id, Int(level))
     _flush_native_logs!()
+    ok || _throw_error(:state, :consumer_set_log_level, "Consumer handle is invalid (maybe closed).")
     return c
 end

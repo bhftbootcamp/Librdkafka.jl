@@ -1,10 +1,11 @@
 using TOML
+using Printf
 using EasyCurl
 
-const RELEASE_BASE_URL = "https://github.com/bhftbootcamp/Librdkafka.jl/releases/download"
+const ENV_LIB_PATH = "LIBRDKAFKA_JL_LIB_PATH"
 
-lib_name() = Sys.iswindows() ? "libkafka.dll" :
-             Sys.isapple()   ? "libkafka.dylib" : "libkafka.so"
+@inline lib_name() = Sys.iswindows() ? "libkafka.dll" :
+                     Sys.isapple()   ? "libkafka.dylib" : "libkafka.so"
 
 function platform_tag()
     if Sys.islinux()
@@ -16,7 +17,11 @@ function platform_tag()
             error("Unsupported Linux architecture: $(Sys.ARCH)")
         end
     elseif Sys.isapple()
-        return Sys.ARCH === :aarch64 ? "macos-aarch64" : "macos-x86_64"
+        if Sys.ARCH === :aarch64
+            "macos-aarch64"
+        else
+            "macos-x86_64"
+        end
     elseif Sys.iswindows()
         return "windows-x86_64"
     else
@@ -24,108 +29,141 @@ function platform_tag()
     end
 end
 
-platform_pretty() = Sys.islinux()   ? "Linux" :
-                    Sys.isapple()   ? "macOS" :
-                    Sys.iswindows() ? "Windows" : string(Sys.KERNEL)
+function platform_pretty()
+    if Sys.islinux()
+        return "Linux"
+    elseif Sys.isapple()
+        return "macOS"
+    elseif Sys.iswindows()
+        return "Windows"
+    else
+        return string(Sys.KERNEL)
+    end
+end
 
-julia_minor() = "$(VERSION.major).$(VERSION.minor)"
+@inline julia_minor() = "$(VERSION.major).$(VERSION.minor)"
 
 function project_version(pkg_dir::AbstractString)
     toml = TOML.parsefile(joinpath(pkg_dir, "Project.toml"))
     v = get(toml, "version", nothing)
-    v isa String || error("Project.toml has no valid `version` entry")
-    return v
+    v === nothing && error("Project.toml has no `version` entry")
+    return String(v)
 end
 
-function try_download_release(pkg_dir::String, lib_path::String)
+function ensure_tar()
     tarbin = Sys.which("tar")
-    if tarbin === nothing
-        @warn "`tar` not found on PATH; cannot extract downloaded archive" platform=platform_pretty()
-        return false
-    end
-    ver  = project_version(pkg_dir)
+    tarbin === nothing && return nothing
+    return tarbin
+end
+
+function try_download_release!(; pkg_dir::String, lib_dir::String, lib_path::String)
+    mkpath(lib_dir)
+    ver = project_version(pkg_dir)
     plat = platform_tag()
     jver = julia_minor()
-    url  = "$RELEASE_BASE_URL/v$ver/$plat-julia$jver.tar.gz"
-    @info "Downloading pre-built binary" url
+    url = "https://github.com/bhftbootcamp/Librdkafka.jl/releases/download/v$ver/$plat-julia$jver.tar.gz"
+    @info "Attempting to download pre-built binary from GitHub releases" url
+    resp = http_request("GET", url; read_timeout=30, connect_timeout=10)
+    if http_status(resp) != 200
+        @warn "Pre-built binary not found" status=http_status(resp) version=ver platform=plat julia=jver
+        return false
+    end
+    tarbin = ensure_tar()
+    if tarbin === nothing
+        @warn "`tar` not found on PATH; cannot extract downloaded archive automatically" platform=platform_pretty()
+        return false
+    end
     tmp = tempname() * ".tar.gz"
     try
-        resp = http_request("GET", url; read_timeout=30, connect_timeout=10)
-        if http_status(resp) != 200
-            @warn "Pre-built binary not available" status=http_status(resp) version=ver platform=plat julia=jver
+        write(tmp, http_body(resp))
+        run(`$tarbin -xzf $tmp -C $lib_dir`)
+        if isfile(lib_path)
+            @info "Successfully downloaded and extracted pre-built binary" lib_path
+            return true
+        else
+            @warn "Archive extracted but library file not found where expected" lib_path
             return false
         end
-        mkpath(dirname(lib_path))
-        write(tmp, http_body(resp))
-        run(`$tarbin -xzf $tmp -C $(dirname(lib_path))`)
-        isfile(lib_path) && return true
-        @warn "Archive extracted but expected library not found" lib_path
-        return false
-    catch e
-        @warn "Download or extraction failed" url exception=(e, catch_backtrace())
-        return false
     finally
         rm(tmp; force=true)
     end
 end
 
-function try_build_local(pkg_dir::String, lib_path::String)
-    cmake = Sys.which("cmake")
-    if cmake === nothing
-        @warn "cmake not found; cannot build from source"
-        return false
-    end
-    src_dir   = joinpath(pkg_dir, "deps", "src")
-    build_dir = joinpath(src_dir, "build")
-    if !isdir(src_dir)
-        @warn "CMake source directory not found" src_dir
-        return false
-    end
-    try
-        load_path = join(["@", "@v#.#", "@stdlib"], Sys.iswindows() ? ";" : ":")
-        withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0", "JULIA_LOAD_PATH" => load_path) do
-            run(`$(Base.julia_cmd()) --project=$pkg_dir -e 'import Pkg; Pkg.instantiate()'`)
-        end
-        run(`$cmake -S $src_dir -B $build_dir -DCMAKE_BUILD_TYPE=Release`)
-        run(`$cmake --build $build_dir --config Release`)
-        built = joinpath(build_dir, "lib", basename(lib_path))
-        if isfile(built)
-            mkpath(dirname(lib_path))
-            cp(built, lib_path; force=true)
-            @info "Built from source" lib_path
-            return true
-        end
-    catch e
-        @warn "Build from source failed" exception=(e, catch_backtrace())
+function try_copy_local_build!(; pkg_dir::String, lib_dir::String, lib_path::String, lib_name::String)
+    built = joinpath(pkg_dir, "deps", "src", "build", "lib", lib_name)
+    if isfile(built)
+        mkpath(lib_dir)
+        cp(built, lib_path; force=true)
+        @info "Using local build: copied library into deps/lib" from=built to=lib_path
+        return true
     end
     return false
 end
 
+function try_copy_env_override!(; lib_path::String)
+    p = get(ENV, ENV_LIB_PATH, "")
+    isempty(p) && return false
+    if !isfile(p)
+        @warn "ENV override path does not exist" env=ENV_LIB_PATH path=p
+        return false
+    end
+    mkpath(dirname(lib_path))
+    cp(p, lib_path; force=true)
+    @info "Using library from ENV override" env=ENV_LIB_PATH from=p to=lib_path
+    return true
+end
+
 function main()
-    pkg_dir  = dirname(@__DIR__)
-    lib_path = joinpath(pkg_dir, "deps", "lib", lib_name())
-
-    isfile(lib_path) && (@info "Library already present" lib_path; return)
-
-    try_download_release(pkg_dir, lib_path) && return
-    try_build_local(pkg_dir, lib_path) && return
-
+    pkg_dir = dirname(@__DIR__)
+    lib_dir = joinpath(pkg_dir, "deps", "lib")
+    name = lib_name()
+    lib_path = joinpath(lib_dir, name)
+    if isfile(lib_path)
+        @info "Library already present" lib_path
+        return
+    end
+    if try_copy_env_override!(; lib_path)
+        return
+    end
+    ok = false
+    try
+        ok = try_download_release!(; pkg_dir=String(pkg_dir), lib_dir=String(lib_dir), lib_path=String(lib_path))
+    catch e
+        @warn "Failed to download binary" exception=(e, catch_backtrace())
+    end
+    if ok
+        return
+    end
+    if try_copy_local_build!(; pkg_dir=String(pkg_dir), lib_dir=String(lib_dir), lib_path=String(lib_path), lib_name=name)
+        return
+    end
     plat = platform_pretty()
-    tag  = platform_tag()
     jver = julia_minor()
     error("""
-    Could not locate $(lib_name()) for $plat (Julia $jver).
+    Could not locate $name for $plat (Julia $jver).
 
-    Tried:
-    1) Existing file:  $lib_path
-    2) GitHub release: $RELEASE_BASE_URL/v<version>/$tag-julia$jver.tar.gz
-    3) Local CMake build from deps/src
+    Tried in order:
+    1) Existing file: $lib_path
+    2) ENV override: $ENV_LIB_PATH
+    3) GitHub release download for platform tag: $(platform_tag()), Julia: $jver
+    4) Local build: deps/src/build/lib/$name
 
-    To resolve, either:
-    - place a prebuilt $(lib_name()) into deps/lib/
-    - or build manually:
-        cmake -S deps/src -B deps/src/build
-        cmake --build deps/src/build
+    To build from source on $plat:
+      1. cd ~/.julia/packages/Librdkafka/*/
+      2. cmake -S deps/src -B deps/src/build
+      3. cmake --build deps/src/build
+
+    Or install from dev mode:
+      julia> using Pkg
+      julia> Pkg.develop(url="https://github.com/bhftbootcamp/Librdkafka.jl")
+      Then:
+      cd ~/.julia/dev/Librdkafka
+      cmake -S deps/src -B deps/src/build
+      cmake --build deps/src/build
+
+    Tip:
+      You can also provide a prebuilt library via:
+        ENV["$ENV_LIB_PATH"] = "/full/path/to/$name"
     """)
 end
 
