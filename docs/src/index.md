@@ -81,6 +81,37 @@ Ready-to-run scripts are in `examples/`. See:
 
 See the [Julia REPL help](https://docs.julialang.org/en/v1/stdlib/REPL/) (e.g. `?KafkaProducer`) for function and type documentation.
 
+### Public API
+
+```@docs
+Librdkafka.KafkaClientError
+Librdkafka.KafkaError
+Librdkafka.KafkaProducer
+Librdkafka.KafkaConsumer
+Librdkafka.produce
+Librdkafka.subscribe!
+Librdkafka.assign!
+Librdkafka.poll
+Librdkafka.commit
+Librdkafka.commit_record
+Librdkafka.seek_to_beginning!
+Librdkafka.seek_to_end!
+Librdkafka.log_level!
+Librdkafka.disable_logs!
+Librdkafka.log_format!
+Librdkafka.log_stdout!
+Librdkafka.log_julia!
+Librdkafka.log_file!
+Librdkafka.enable_default_logs!
+```
+
+### Internal FFI
+
+```@docs
+Librdkafka.Bindings
+Librdkafka.Bindings.Native.make_topics_set
+```
+
 ## License
 
 MIT License. See [LICENSE](https://github.com/bhftbootcamp/Librdkafka.jl/blob/master/LICENSE) in the repository.
