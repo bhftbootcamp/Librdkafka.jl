@@ -22,7 +22,7 @@ mutable struct KafkaProducer
     function KafkaProducer(bootstrap_servers::AbstractString; config::AbstractDict=Dict{String,String}())
         props_id = _build_properties(bootstrap_servers; config=config)
         id = _B.create_kafka_producer(props_id)
-        id == 0 && throw(ErrorException("Failed to create KafkaProducer (native returned null handle)."))
+        id == 0 && _throw_error(:state, :create_producer, "Failed to create KafkaProducer (native returned null handle).")
         _flush_native_logs!()
         p = new(Int(id), String(bootstrap_servers), false)
         finalizer(close, p)
@@ -63,7 +63,8 @@ function produce(p::KafkaProducer, topic::Topic, partition::Partition,
     _flush_native_logs!()
     err_s = String(err)
     isempty(err_s) && return nothing
-    throw(ErrorException("Kafka produce failed: $err_s"))
+    _throw_error(:operation, :produce, "Kafka produce failed.",
+        details=_details(:topic => topic.name, :partition => partition.id, :message => err_s))
 end
 
 produce(p::KafkaProducer, topic::AbstractString, partition::Integer,
@@ -80,7 +81,8 @@ Set the librdkafka log verbosity level (0-7) for this producer.
 """
 function log_level!(p::KafkaProducer, level::Integer)
     _checkopen(p)
-    _B.producer_set_log_level(p.id, Int(level))
+    ok = _B.producer_set_log_level(p.id, Int(level))
     _flush_native_logs!()
+    ok || _throw_error(:state, :producer_set_log_level, "Producer handle is invalid (maybe closed).")
     return p
 end

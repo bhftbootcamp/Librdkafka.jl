@@ -19,6 +19,7 @@ export create_kafka_consumer,
     consumer_close,
     consumer_subscribe,
     consumer_assign,
+    consumer_assign_many,
     consumer_poll,
     consumer_commit_sync,
     consumer_commit_record,
@@ -71,6 +72,9 @@ consumer_subscribe(id::Integer, topics_set) =
 
 consumer_assign(id::Integer, topic::AbstractString, partition::Integer, offset::Integer) =
     _cpp_call(:consumer_assign, Int(id), String(topic), Int(partition), Int(offset))
+
+consumer_assign_many(id::Integer, topics::Vector{String}, partitions::Vector{Int}, offsets::Vector{Int64}) =
+    _cpp_call(:consumer_assign_many, Int(id), topics, partitions, offsets)
 
 consumer_poll(id::Integer, timeout_ms::Integer) =
     _cpp_call(:consumer_poll_raw, Int(id), Int(timeout_ms))

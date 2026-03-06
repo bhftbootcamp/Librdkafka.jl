@@ -39,8 +39,8 @@ end
 function _flush_native_logs!()
     try
         _drain_native_logs!()
-    catch
-        # Swallow errors so that log draining never interrupts user operations.
+    catch e
+        @logmsg Warn "Failed to flush native logs" exception = (e, catch_backtrace())
     end
     return nothing
 end
@@ -107,7 +107,8 @@ Route native logs to a file at `path`.
 """
 function log_file!(path::AbstractString; append::Bool=true)
     ok = _B.logging_set_file(String(path), append)
-    ok || throw(ErrorException("Failed to open log file for writing: $(path)"))
+    ok || _throw_error(:operation, :logging_set_file, "Failed to open log file for writing.",
+        details=_details(:path => String(path), :append => append))
     _stop_native_log_timer!()
     return nothing
 end

@@ -208,52 +208,83 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     static std::map<int, std::shared_ptr<kafka::Properties>> properties_store;
     static std::map<int, std::shared_ptr<kafka::clients::producer::KafkaProducer>> producer_store;
     static std::map<int, std::shared_ptr<kafka::clients::consumer::KafkaConsumer>> consumer_store;
-    static int next_id = 1;
+    static std::mutex store_mutex;
+    static std::atomic<int> next_id{1};
 
     (void)jlcxx::julia_type<std::vector<std::string>>();
+    (void)jlcxx::julia_type<std::vector<int>>();
+    (void)jlcxx::julia_type<std::vector<long long>>();
 
     kafka::setGlobalLogger(global_log_callback());
 
     mod.method("create_properties", []() -> int {
-        int id = next_id++;
-        properties_store[id] = std::make_shared<kafka::Properties>();
-        properties_store[id]->put("log_cb", global_log_callback());
+        const int id = next_id.fetch_add(1);
+        std::lock_guard<std::mutex> guard(store_mutex);
+        auto props = std::make_shared<kafka::Properties>();
+        props->put("log_cb", global_log_callback());
+        properties_store[id] = std::move(props);
         return id;
     });
 
-    mod.method("properties_put", [](int props_id, const std::string& key, const std::string& value) {
-        if (properties_store.count(props_id)) {
-            properties_store[props_id]->put(key, value);
+    mod.method("properties_put", [](int props_id, const std::string& key, const std::string& value) -> bool {
+        std::lock_guard<std::mutex> guard(store_mutex);
+        auto it = properties_store.find(props_id);
+        if (it == properties_store.end()) {
+            return false;
         }
+        it->second->put(key, value);
+        return true;
     });
     mod.method("create_kafka_producer", [](int props_id) -> int {
-        if (!properties_store.count(props_id)) return 0;
-        if (!properties_store[props_id]->contains("log_cb")) {
-            properties_store[props_id]->put("log_cb", global_log_callback());
+        std::shared_ptr<kafka::Properties> props;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = properties_store.find(props_id);
+            if (it == properties_store.end()) return 0;
+            props = it->second;
+            properties_store.erase(it);
         }
-        int id = next_id++;
-        producer_store[id] = std::make_shared<kafka::clients::producer::KafkaProducer>(*properties_store[props_id]);
+        if (!props->contains("log_cb")) {
+            props->put("log_cb", global_log_callback());
+        }
+        const int id = next_id.fetch_add(1);
+        auto producer = std::make_shared<kafka::clients::producer::KafkaProducer>(*props);
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            producer_store[id] = std::move(producer);
+        }
         return id;
     });
 
     mod.method("producer_close", [](int producer_id) -> bool {
-        auto it = producer_store.find(producer_id);
-        if (it == producer_store.end()) {
-            return false;
+        std::shared_ptr<kafka::clients::producer::KafkaProducer> producer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = producer_store.find(producer_id);
+            if (it == producer_store.end()) {
+                return false;
+            }
+            producer = it->second;
+            producer_store.erase(it);
         }
         try {
-            it->second->close();
+            producer->close();
         } catch (...) {
         }
-        producer_store.erase(it);
         return true;
     });
 
     mod.method("producer_set_log_level", [](int producer_id, int level) -> bool {
-        if (!producer_store.count(producer_id)) {
-            return false;
+        std::shared_ptr<kafka::clients::producer::KafkaProducer> producer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = producer_store.find(producer_id);
+            if (it == producer_store.end()) {
+                return false;
+            }
+            producer = it->second;
         }
-        producer_store[producer_id]->setLogLevel(level);
+        producer->setLogLevel(level);
         return true;
     });
 
@@ -336,9 +367,15 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("produce", [](int producer_id, const std::string& topic, int partition,
-                            const std::string& key, jlcxx::ArrayRef<uint8_t> value) -> std::string {
-        if (!producer_store.count(producer_id)) {
-            return "KafkaProducer handle not found. It may be closed or invalid.";
+                             const std::string& key, jlcxx::ArrayRef<uint8_t> value) -> std::string {
+        std::shared_ptr<kafka::clients::producer::KafkaProducer> producer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = producer_store.find(producer_id);
+            if (it == producer_store.end()) {
+                return "KafkaProducer handle not found. It may be closed or invalid.";
+            }
+            producer = it->second;
         }
         kafka::clients::producer::ProducerRecord record(
             topic, kafka::Partition(partition),
@@ -346,27 +383,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             kafka::Value(value.data(), value.size())
         );
         try {
-            producer_store[producer_id]->syncSend(record);
-            return "";
-        } catch (const std::exception& e) {
-            return e.what();
-        } catch (...) {
-            return "Unknown exception";
-        }
-    });
-
-    mod.method("produce_binary", [](int producer_id, const std::string& topic, int partition,
-                                   const std::string& key, jlcxx::ArrayRef<uint8_t> value) -> std::string {
-        if (!producer_store.count(producer_id)) {
-            return "KafkaProducer handle not found. It may be closed or invalid.";
-        }
-        kafka::clients::producer::ProducerRecord record(
-            topic, kafka::Partition(partition),
-            kafka::Key(key.data(), key.size()),
-            kafka::Value(value.data(), value.size())
-        );
-        try {
-            producer_store[producer_id]->syncSend(record);
+            producer->syncSend(record);
             return "";
         } catch (const std::exception& e) {
             return e.what();
@@ -376,34 +393,65 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("create_kafka_consumer", [](int props_id) -> int {
-        if (!properties_store.count(props_id)) return 0;
-        if (!properties_store[props_id]->contains("log_cb")) {
-            properties_store[props_id]->put("log_cb", global_log_callback());
+        std::shared_ptr<kafka::Properties> props;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = properties_store.find(props_id);
+            if (it == properties_store.end()) return 0;
+            props = it->second;
+            properties_store.erase(it);
         }
-        int id = next_id++;
-        consumer_store[id] = std::make_shared<kafka::clients::consumer::KafkaConsumer>(*properties_store[props_id]);
+        if (!props->contains("log_cb")) {
+            props->put("log_cb", global_log_callback());
+        }
+        const int id = next_id.fetch_add(1);
+        auto consumer = std::make_shared<kafka::clients::consumer::KafkaConsumer>(*props);
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            consumer_store[id] = std::move(consumer);
+        }
         return id;
     });
 
     mod.method("consumer_set_log_level", [](int consumer_id, int level) -> bool {
-        if (!consumer_store.count(consumer_id)) {
-            return false;
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                return false;
+            }
+            consumer = it->second;
         }
-        consumer_store[consumer_id]->setLogLevel(level);
+        consumer->setLogLevel(level);
         return true;
     });
 
-    mod.method("consumer_subscribe", [](int consumer_id, const std::set<std::string>& topics) {
-        if (consumer_store.count(consumer_id)) {
-            consumer_store[consumer_id]->subscribe(topics);
+    mod.method("consumer_subscribe", [](int consumer_id, const std::set<std::string>& topics) -> bool {
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                return false;
+            }
+            consumer = it->second;
         }
+        consumer->subscribe(topics);
+        return true;
     });
 
     mod.method("consumer_poll_raw", [](int consumer_id, int timeout_ms) -> std::vector<std::uint8_t> {
-        if (!consumer_store.count(consumer_id)) {
-            throw std::runtime_error("KafkaConsumer handle not found. It may be closed or invalid.");
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                throw std::runtime_error("KafkaConsumer handle not found. It may be closed or invalid.");
+            }
+            consumer = it->second;
         }
-        auto records = consumer_store[consumer_id]->poll(std::chrono::milliseconds(timeout_ms));
+        auto records = consumer->poll(std::chrono::milliseconds(timeout_ms));
         std::vector<std::uint8_t> out;
         std::size_t estimate = 0;
         for (const auto& record : records) {
@@ -448,58 +496,130 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("consumer_commit_sync", [](int consumer_id) -> int {
-        if (consumer_store.count(consumer_id)) {
-            consumer_store[consumer_id]->commitSync();
-            return 0;
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                return -1;
+            }
+            consumer = it->second;
         }
-        return -1;
+        consumer->commitSync();
+        return 0;
     });
 
     mod.method("consumer_close", [](int consumer_id) -> bool {
-        auto it = consumer_store.find(consumer_id);
-        if (it == consumer_store.end()) {
-            return false;
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                return false;
+            }
+            consumer = it->second;
+            consumer_store.erase(it);
         }
         try {
-            it->second->close();
+            consumer->close();
         } catch (...) {
         }
-        consumer_store.erase(it);
         return true;
     });
 
 
-    mod.method("consumer_assign", [](int consumer_id, const std::string& topic, int partition, long long offset) {
-        if (consumer_store.count(consumer_id)) {
-            kafka::TopicPartitionOffsets tpos;
-            tpos[kafka::TopicPartition(topic, partition)] = offset;
-            consumer_store[consumer_id]->assign(kafka::TopicPartitions{tpos.begin()->first});
-            if (offset != RD_KAFKA_OFFSET_INVALID) {
-                consumer_store[consumer_id]->seek(kafka::TopicPartition(topic, partition), offset);
+    mod.method("consumer_assign", [](int consumer_id, const std::string& topic, int partition, long long offset) -> bool {
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                return false;
+            }
+            consumer = it->second;
+        }
+        kafka::TopicPartitionOffsets tpos;
+        tpos[kafka::TopicPartition(topic, partition)] = offset;
+        consumer->assign(kafka::TopicPartitions{tpos.begin()->first});
+        if (offset != RD_KAFKA_OFFSET_INVALID) {
+            consumer->seek(kafka::TopicPartition(topic, partition), offset);
+        }
+        return true;
+    });
+
+    mod.method("consumer_assign_many", [](int consumer_id, const std::vector<std::string>& topics,
+                                          const std::vector<int>& partitions, const std::vector<long long>& offsets) -> bool {
+        if (topics.size() != partitions.size() || topics.size() != offsets.size()) {
+            throw std::runtime_error("consumer_assign_many: topics/partitions/offsets length mismatch.");
+        }
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                return false;
+            }
+            consumer = it->second;
+        }
+
+        kafka::TopicPartitions tps;
+        for (std::size_t i = 0; i < topics.size(); ++i) {
+            tps.emplace(topics[i], partitions[i]);
+        }
+        consumer->assign(tps);
+
+        for (std::size_t i = 0; i < topics.size(); ++i) {
+            if (offsets[i] != RD_KAFKA_OFFSET_INVALID) {
+                consumer->seek(kafka::TopicPartition(topics[i], partitions[i]), offsets[i]);
             }
         }
+        return true;
     });
 
-    mod.method("consumer_seek_to_beginning", [](int consumer_id, const std::string& topic, int partition) {
-        if (consumer_store.count(consumer_id)) {
-            kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
-            consumer_store[consumer_id]->seekToBeginning(partitions);
+    mod.method("consumer_seek_to_beginning", [](int consumer_id, const std::string& topic, int partition) -> bool {
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                return false;
+            }
+            consumer = it->second;
         }
+        kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
+        consumer->seekToBeginning(partitions);
+        return true;
     });
 
-    mod.method("consumer_seek_to_end", [](int consumer_id, const std::string& topic, int partition) {
-        if (consumer_store.count(consumer_id)) {
-            kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
-            consumer_store[consumer_id]->seekToEnd(partitions);
+    mod.method("consumer_seek_to_end", [](int consumer_id, const std::string& topic, int partition) -> bool {
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                return false;
+            }
+            consumer = it->second;
         }
+        kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
+        consumer->seekToEnd(partitions);
+        return true;
     });
 
-    mod.method("consumer_commit_record", [](int consumer_id, const std::string& topic, int partition, long long offset) {
-        if (consumer_store.count(consumer_id)) {
-            kafka::TopicPartitionOffsets tpos;
-            tpos[kafka::TopicPartition(topic, partition)] = offset + 1;
-            consumer_store[consumer_id]->commitSync(tpos);
+    mod.method("consumer_commit_record", [](int consumer_id, const std::string& topic, int partition, long long offset) -> bool {
+        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = consumer_store.find(consumer_id);
+            if (it == consumer_store.end()) {
+                return false;
+            }
+            consumer = it->second;
         }
+        kafka::TopicPartitionOffsets tpos;
+        tpos[kafka::TopicPartition(topic, partition)] = offset + 1;
+        consumer->commitSync(tpos);
+        return true;
     });
 }
 
