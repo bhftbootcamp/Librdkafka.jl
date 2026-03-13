@@ -210,7 +210,7 @@ jobs:
         with:
           version: '1.10'
 
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
 
       - name: Add Registry
         uses: julia-actions/add-julia-registry@v2
