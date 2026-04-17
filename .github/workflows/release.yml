@@ -182,7 +182,7 @@ jobs:
           mv artifacts/*/*.tar.gz release/
           ls -lh release/
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare_release.outputs.tag }}
           files: release/*.tar.gz
