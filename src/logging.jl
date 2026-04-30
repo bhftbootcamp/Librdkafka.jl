@@ -11,7 +11,7 @@ _native_log_level(level::Integer) =
     level <= 3 ? Error : level == 4 ? Warn : level <= 6 ? Info : Debug
 
 function _emit_native_log_entry!(entry::AbstractString)
-    parts = split(String(entry), _NATIVE_LOG_SEPARATOR; limit=4)
+    parts = split(String(entry), _NATIVE_LOG_SEPARATOR; limit = 4)
     if length(parts) != 4
         @logmsg Warn "Malformed native log entry" entry = String(entry)
         return nothing
@@ -47,7 +47,7 @@ end
 
 function _start_native_log_timer!()
     _NATIVE_LOG_TIMER[] === nothing || return nothing
-    _NATIVE_LOG_TIMER[] = Timer(_ -> _flush_native_logs!(), 0.0; interval=0.05)
+    _NATIVE_LOG_TIMER[] = Timer(_ -> _flush_native_logs!(), 0.0; interval = 0.05)
     return nothing
 end
 
@@ -75,7 +75,7 @@ end
 
 Set the native log format string.
 """
-log_format!(format::AbstractString=DEFAULT_LOG_FORMAT) =
+log_format!(format::AbstractString = DEFAULT_LOG_FORMAT) =
     (_B.logging_set_format(String(format)); nothing)
 
 """
@@ -105,10 +105,10 @@ end
 
 Route native logs to a file at `path`.
 """
-function log_file!(path::AbstractString; append::Bool=true)
+function log_file!(path::AbstractString; append::Bool = true)
     ok = _B.logging_set_file(String(path), append)
     ok || _throw_error(:operation, :logging_set_file, "Failed to open log file for writing.",
-        details=_details(:path => String(path), :append => append))
+        details = _details(:path => String(path), :append => append))
     _stop_native_log_timer!()
     return nothing
 end

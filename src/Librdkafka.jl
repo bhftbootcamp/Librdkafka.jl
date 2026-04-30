@@ -65,7 +65,7 @@ TopicPartition(topic::AbstractString, partition::Integer) = TopicPartition(Topic
 struct Assignment
     topic_partition::TopicPartition
     offset::Int
-    function Assignment(tp::TopicPartition; offset::Integer=RD_KAFKA_OFFSET_INVALID)
+    function Assignment(tp::TopicPartition; offset::Integer = RD_KAFKA_OFFSET_INVALID)
         new(tp, Int(offset))
     end
 end
@@ -83,13 +83,13 @@ end
 function Base.show(io::IO, r::ConsumerRecord)
     ts = Dates.unix2datetime(r.timestamp_ms / 1000)
     print(io, "ConsumerRecord(", r.topic.name, ":", r.partition.id, " @", r.offset,
-          ", key=\"", r.key, "\", value_bytes=", length(r.value), ", ts=", ts, ")")
+        ", key=\"", r.key, "\", value_bytes=", length(r.value), ", ts=", ts, ")")
 end
 
 include("errors.jl")
 
 @noinline _closed(kind::Symbol, id::Int) =
-    _throw_error(:state, kind, "$(kind) is closed (id=$(id))."; details=_details(:reason => "closed"))
+    _throw_error(:state, kind, "$(kind) is closed (id=$(id))."; details = _details(:reason => "closed"))
 
 include("ffi/bindings.jl")
 using .Bindings

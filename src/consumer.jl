@@ -8,10 +8,10 @@ After creation, call [`subscribe!`](@ref) (group-based) or [`assign!`](@ref)
 
 # Example
 ```julia
-c = KafkaConsumer("localhost:9092"; group_id="my-group",
-                  config=Dict(AUTO_OFFSET_RESET => "earliest"))
+c = KafkaConsumer("localhost:9092"; group_id = "my-group",
+    config = Dict(AUTO_OFFSET_RESET => "earliest"))
 subscribe!(c, ["my-topic"])
-records = poll(c; timeout_ms=1000)
+records = poll(c; timeout_ms = 1000)
 close(c)
 ```
 """
@@ -25,10 +25,11 @@ mutable struct KafkaConsumer
     assignments::Vector{Assignment}
 
     function KafkaConsumer(bootstrap_servers::AbstractString;
-                           group_id::Union{Nothing,AbstractString}=nothing,
-                           config::AbstractDict=Dict{String,String}())
+        group_id::Union{Nothing,AbstractString} = nothing,
+        config::AbstractDict = Dict{String,String}(),
+    )
         gid = group_id === nothing ? nothing : String(group_id)
-        props_id = _build_properties(bootstrap_servers; group_id=gid, config=config)
+        props_id = _build_properties(bootstrap_servers; group_id = gid, config = config)
         id = _B.create_kafka_consumer(props_id)
         bs = String(bootstrap_servers)
         id == 0 && _throw_error(:state, :create_consumer, "Failed to create KafkaConsumer (native returned null handle).")
@@ -45,7 +46,7 @@ function Base.show(io::IO, c::KafkaConsumer)
     group = c.group_id === nothing ? "no-group" : c.group_id
     state = c.closed ? "closed" : "open"
     print(io, "KafkaConsumer(", c.bootstrap_servers,
-          ", group=", group, ", id=", c.id, ", ", state, ")")
+        ", group=", group, ", id=", c.id, ", ", state, ")")
 end
 
 @inline function _checkopen(c::KafkaConsumer)
@@ -121,12 +122,12 @@ end
 
 assign!(c::KafkaConsumer, a::Assignment) = assign!(c, [a])
 
-assign!(c::KafkaConsumer, tp::TopicPartition; offset::Integer=RD_KAFKA_OFFSET_INVALID) =
-    assign!(c, Assignment(tp; offset=offset))
+assign!(c::KafkaConsumer, tp::TopicPartition; offset::Integer = RD_KAFKA_OFFSET_INVALID) =
+    assign!(c, Assignment(tp; offset = offset))
 
 assign!(c::KafkaConsumer, topic::AbstractString, partition::Integer;
-        offset::Integer=RD_KAFKA_OFFSET_INVALID) =
-    assign!(c, TopicPartition(topic, partition); offset=offset)
+        offset::Integer = RD_KAFKA_OFFSET_INVALID) =
+    assign!(c, TopicPartition(topic, partition); offset = offset)
 
 """
     poll
@@ -134,7 +135,7 @@ assign!(c::KafkaConsumer, topic::AbstractString, partition::Integer;
 Poll for new messages. Returns an empty vector if nothing is available within
 `timeout_ms` milliseconds.
 """
-function poll(c::KafkaConsumer; timeout_ms::Integer=1000)
+function poll(c::KafkaConsumer; timeout_ms::Integer = 1000)
     _checkopen(c)
     _checkready(c)
     timeout_ms < 0 && throw(DomainError(timeout_ms, "timeout_ms must be non-negative."))
@@ -156,7 +157,7 @@ function commit(c::KafkaConsumer)
     _flush_native_logs!()
     err == -1 && _throw_error(:state, :consumer_commit, "Consumer handle is invalid (maybe closed).")
     err != 0 && _throw_error(:operation, :consumer_commit, "Offset commit failed.",
-        details=_details(:error_code => err))
+        details = _details(:error_code => err))
     return c
 end
 
