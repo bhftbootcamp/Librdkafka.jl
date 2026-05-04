@@ -19,8 +19,8 @@ mutable struct KafkaProducer
     bootstrap_servers::String
     closed::Bool
 
-    function KafkaProducer(bootstrap_servers::AbstractString; config::AbstractDict=Dict{String,String}())
-        props_id = _build_properties(bootstrap_servers; config=config)
+    function KafkaProducer(bootstrap_servers::AbstractString; config::AbstractDict = Dict{String,String}())
+        props_id = _build_properties(bootstrap_servers; config = config)
         id = _B.create_kafka_producer(props_id)
         id == 0 && _throw_error(:state, :create_producer, "Failed to create KafkaProducer (native returned null handle).")
         _flush_native_logs!()
@@ -57,18 +57,20 @@ Send a message to Kafka.  `value` may be raw bytes or a UTF-8 string.
 `topic` and `partition` accept both typed (`Topic`/`Partition`) and plain values.
 """
 function produce(p::KafkaProducer, topic::Topic, partition::Partition,
-                 key::AbstractString, value::Vector{UInt8})
+    key::AbstractString, value::Vector{UInt8},
+)
     _checkopen(p)
     err = _B.produce(p.id, topic.name, partition.id, key, value)
     _flush_native_logs!()
     err_s = String(err)
     isempty(err_s) && return nothing
     _throw_error(:operation, :produce, "Kafka produce failed.",
-        details=_details(:topic => topic.name, :partition => partition.id, :message => err_s))
+        details = _details(:topic => topic.name, :partition => partition.id, :message => err_s))
 end
 
 produce(p::KafkaProducer, topic::AbstractString, partition::Integer,
-        key::AbstractString, value::Vector{UInt8}) =
+    key::AbstractString, value::Vector{UInt8},
+) =
     produce(p, Topic(topic), Partition(partition), key, value)
 
 produce(p::KafkaProducer, topic, partition, key::AbstractString, value::AbstractString) =

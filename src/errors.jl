@@ -44,7 +44,7 @@ function _details(pairs::Pair{Symbol, <:Any}...)
     return out
 end
 
-function _throw_error(kind::Symbol, operation::Symbol, message::AbstractString; details::Vector{String}=String[])
+function _throw_error(kind::Symbol, operation::Symbol, message::AbstractString; details::Vector{String} = String[])
     throw(KafkaError(kind, operation, String(message), details))
 end
 
@@ -53,7 +53,7 @@ function _with_kafka_error(operation::Symbol, message::AbstractString, details::
         return f()
     catch e
         _throw_error(:operation, operation, message,
-            details=vcat(details, "exception=$(e)"))
+            details = vcat(details, "exception=$(e)"))
     end
 end
 
