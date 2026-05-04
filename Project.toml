@@ -12,8 +12,9 @@ Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 librdkafka_jll = "7943bfb0-7437-5acd-a008-22777931c7aa"
 
 [compat]
-julia = "1.10"
+CxxWrap = "0.15, 0.16, 0.17"
 CyrusSASL_jll = "2.1.29"
+julia = "1.10"
 librdkafka_jll = "2.0"
 
 [extras]
