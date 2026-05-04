@@ -60,7 +60,7 @@ cmake -S deps/src -B deps/src/build && cmake --build deps/src/build
 
 ## Installation
 
-If you haven't installed our local registry yet, do that first:
+If you haven't installed our [local registry](https://github.com/bhftbootcamp/Green) yet, do that first:
 
 ```
 ] registry add https://github.com/bhftbootcamp/Green.git
