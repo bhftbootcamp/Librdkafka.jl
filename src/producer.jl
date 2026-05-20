@@ -50,6 +50,27 @@ function Base.close(p::KafkaProducer)
     return nothing
 end
 
+_to_header_value(v::Vector{UInt8}) = v
+_to_header_value(v::AbstractString) = Vector{UInt8}(codeunits(v))
+_to_header_value(v::AbstractVector{UInt8}) = Vector{UInt8}(v)
+_to_header_value(v) = Vector{UInt8}(string(v))
+
+"""
+    _normalize_headers(headers) -> KafkaHeaders
+
+Convert user-friendly headers to the canonical `KafkaHeaders` format.
+Values can be strings, numbers, or raw bytes — anything gets converted to `Vector{UInt8}`.
+"""
+function _normalize_headers(headers)::KafkaHeaders
+    result = Pair{String,Vector{UInt8}}[]
+    sizehint!(result, length(headers))
+    for (k, v) in headers
+        push!(result, String(k) => _to_header_value(v))
+    end
+    return result
+end
+_normalize_headers(headers::KafkaHeaders) = headers
+
 """
     _serialize_headers(headers) -> Vector{UInt8}
 
@@ -91,18 +112,26 @@ end
 Send a message to Kafka.  `value` may be raw bytes or a UTF-8 string.
 `topic` and `partition` accept both typed (`Topic`/`Partition`) and plain values.
 
-Optional `headers` keyword accepts `KafkaHeaders` (a.k.a. `Vector{Pair{String,Vector{UInt8}}}`).
+Optional `headers` keyword accepts a list of `key => value` pairs.
+Values can be `String`, `Vector{UInt8}`, numbers, or anything convertible to string.
+
+# Example
+```julia
+produce(p, "topic", 0, "key", "payload";
+    headers = ["content-type" => "application/json", "version" => 2])
+```
 """
 function produce(p::KafkaProducer, topic::Topic, partition::Partition,
     key::AbstractString, value::Vector{UInt8};
-    headers::KafkaHeaders = Pair{String,Vector{UInt8}}[],
+    headers = Pair{String,Vector{UInt8}}[],
 )
     _checkopen(p)
     if isempty(headers)
         err = _B.produce(p.id, topic.name, partition.id, key, value)
     else
+        norm = _normalize_headers(headers)
         err = _B.produce_with_headers(p.id, topic.name, partition.id, key, value,
-                                       _serialize_headers(headers))
+                                       _serialize_headers(norm))
     end
     _flush_native_logs!()
     err_s = String(err)
@@ -113,12 +142,12 @@ end
 
 produce(p::KafkaProducer, topic::AbstractString, partition::Integer,
     key::AbstractString, value::Vector{UInt8};
-    headers::KafkaHeaders = Pair{String,Vector{UInt8}}[],
+    headers = Pair{String,Vector{UInt8}}[],
 ) =
     produce(p, Topic(topic), Partition(partition), key, value; headers)
 
 produce(p::KafkaProducer, topic, partition, key::AbstractString, value::AbstractString;
-    headers::KafkaHeaders = Pair{String,Vector{UInt8}}[],
+    headers = Pair{String,Vector{UInt8}}[],
 ) =
     produce(p, topic, partition, key, Vector{UInt8}(codeunits(value)); headers)
 
