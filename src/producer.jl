@@ -51,16 +51,59 @@ function Base.close(p::KafkaProducer)
 end
 
 """
+    _serialize_headers(headers) -> Vector{UInt8}
+
+Serialize a `KafkaHeaders` list into the flat binary format expected by the C++ layer:
+`u32_le(count) ++ N × (u32_le(key_len) ++ key_bytes ++ u32_le(val_len) ++ val_bytes)`.
+"""
+function _serialize_headers(headers::KafkaHeaders)
+    n = 4
+    for (k, v) in headers
+        n += 4 + sizeof(k) + 4 + length(v)
+    end
+    buf = Vector{UInt8}(undef, n)
+    pos = 1
+    @inline function _put_u32_le!(val::UInt32)
+        @inbounds buf[pos]     = val % UInt8
+        @inbounds buf[pos + 1] = (val >> 8) % UInt8
+        @inbounds buf[pos + 2] = (val >> 16) % UInt8
+        @inbounds buf[pos + 3] = (val >> 24) % UInt8
+        pos += 4
+    end
+    _put_u32_le!(UInt32(length(headers)))
+    for (k, v) in headers
+        kb = codeunits(k)
+        _put_u32_le!(UInt32(length(kb)))
+        copyto!(buf, pos, kb, 1, length(kb))
+        pos += length(kb)
+        _put_u32_le!(UInt32(length(v)))
+        if !isempty(v)
+            copyto!(buf, pos, v, 1, length(v))
+            pos += length(v)
+        end
+    end
+    return buf
+end
+
+"""
     produce
 
 Send a message to Kafka.  `value` may be raw bytes or a UTF-8 string.
 `topic` and `partition` accept both typed (`Topic`/`Partition`) and plain values.
+
+Optional `headers` keyword accepts `KafkaHeaders` (a.k.a. `Vector{Pair{String,Vector{UInt8}}}`).
 """
 function produce(p::KafkaProducer, topic::Topic, partition::Partition,
-    key::AbstractString, value::Vector{UInt8},
+    key::AbstractString, value::Vector{UInt8};
+    headers::KafkaHeaders = Pair{String,Vector{UInt8}}[],
 )
     _checkopen(p)
-    err = _B.produce(p.id, topic.name, partition.id, key, value)
+    if isempty(headers)
+        err = _B.produce(p.id, topic.name, partition.id, key, value)
+    else
+        err = _B.produce_with_headers(p.id, topic.name, partition.id, key, value,
+                                       _serialize_headers(headers))
+    end
     _flush_native_logs!()
     err_s = String(err)
     isempty(err_s) && return nothing
@@ -69,12 +112,15 @@ function produce(p::KafkaProducer, topic::Topic, partition::Partition,
 end
 
 produce(p::KafkaProducer, topic::AbstractString, partition::Integer,
-    key::AbstractString, value::Vector{UInt8},
+    key::AbstractString, value::Vector{UInt8};
+    headers::KafkaHeaders = Pair{String,Vector{UInt8}}[],
 ) =
-    produce(p, Topic(topic), Partition(partition), key, value)
+    produce(p, Topic(topic), Partition(partition), key, value; headers)
 
-produce(p::KafkaProducer, topic, partition, key::AbstractString, value::AbstractString) =
-    produce(p, topic, partition, key, Vector{UInt8}(codeunits(value)))
+produce(p::KafkaProducer, topic, partition, key::AbstractString, value::AbstractString;
+    headers::KafkaHeaders = Pair{String,Vector{UInt8}}[],
+) =
+    produce(p, topic, partition, key, Vector{UInt8}(codeunits(value)); headers)
 
 """
     log_level!

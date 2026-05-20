@@ -10,7 +10,7 @@ export BOOTSTRAP_SERVERS,
     RD_KAFKA_OFFSET_END
 
 export KafkaProducer, KafkaConsumer
-export Topic, Partition, TopicPartition, Assignment, ConsumerRecord
+export Topic, Partition, TopicPartition, Assignment, ConsumerRecord, KafkaHeaders
 export KafkaClientError, KafkaError
 
 export produce
@@ -71,6 +71,8 @@ struct Assignment
 end
 Base.show(io::IO, a::Assignment) = print(io, a.topic_partition, " @", a.offset)
 
+const KafkaHeaders = Vector{Pair{String,Vector{UInt8}}}
+
 struct ConsumerRecord
     topic::Topic
     partition::Partition
@@ -78,12 +80,15 @@ struct ConsumerRecord
     key::String
     value::Vector{UInt8}
     timestamp_ms::Int
+    headers::KafkaHeaders
 end
 
 function Base.show(io::IO, r::ConsumerRecord)
     ts = Dates.unix2datetime(r.timestamp_ms / 1000)
+    nh = length(r.headers)
     print(io, "ConsumerRecord(", r.topic.name, ":", r.partition.id, " @", r.offset,
-        ", key=\"", r.key, "\", value_bytes=", length(r.value), ", ts=", ts, ")")
+        ", key=\"", r.key, "\", value_bytes=", length(r.value),
+        ", headers=", nh, ", ts=", ts, ")")
 end
 
 include("errors.jl")

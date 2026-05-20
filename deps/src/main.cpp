@@ -392,6 +392,65 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         }
     });
 
+    mod.method("produce_with_headers", [](int producer_id, const std::string& topic, int partition,
+                             const std::string& key, jlcxx::ArrayRef<uint8_t> value,
+                             jlcxx::ArrayRef<uint8_t> headers_blob) -> std::string {
+        std::shared_ptr<kafka::clients::producer::KafkaProducer> producer;
+        {
+            std::lock_guard<std::mutex> guard(store_mutex);
+            auto it = producer_store.find(producer_id);
+            if (it == producer_store.end()) {
+                return "KafkaProducer handle not found. It may be closed or invalid.";
+            }
+            producer = it->second;
+        }
+        kafka::clients::producer::ProducerRecord record(
+            topic, kafka::Partition(partition),
+            kafka::Key(key.data(), key.size()),
+            kafka::Value(value.data(), value.size())
+        );
+
+        // Deserialize headers_blob: u32 count, then N × (u32 key_len + key_bytes + u32 val_len + val_bytes)
+        const auto* blob = headers_blob.data();
+        const std::size_t blob_len = headers_blob.size();
+        if (blob_len >= 4) {
+            std::size_t pos = 0;
+            auto read_u32 = [&]() -> std::uint32_t {
+                if (pos + 4 > blob_len) throw std::runtime_error("headers_blob truncated");
+                std::uint32_t v = static_cast<std::uint32_t>(blob[pos])
+                    | (static_cast<std::uint32_t>(blob[pos + 1]) << 8)
+                    | (static_cast<std::uint32_t>(blob[pos + 2]) << 16)
+                    | (static_cast<std::uint32_t>(blob[pos + 3]) << 24);
+                pos += 4;
+                return v;
+            };
+
+            const std::uint32_t count = read_u32();
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const std::uint32_t key_len = read_u32();
+                if (pos + key_len > blob_len) throw std::runtime_error("headers_blob truncated");
+                std::string hkey(reinterpret_cast<const char*>(blob + pos), key_len);
+                pos += key_len;
+
+                const std::uint32_t val_len = read_u32();
+                if (pos + val_len > blob_len) throw std::runtime_error("headers_blob truncated");
+                // ConstBuffer points into headers_blob — data is alive until syncSend copies it
+                record.headers().emplace_back(std::move(hkey),
+                    kafka::ConstBuffer(blob + pos, val_len));
+                pos += val_len;
+            }
+        }
+
+        try {
+            producer->syncSend(record);
+            return "";
+        } catch (const std::exception& e) {
+            return e.what();
+        } catch (...) {
+            return "Unknown exception";
+        }
+    });
+
     mod.method("create_kafka_consumer", [](int props_id) -> int {
         std::shared_ptr<kafka::Properties> props;
         {
@@ -458,7 +517,12 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             const auto& topic = record.topic();
             const auto key = record.key();
             const auto value = record.value();
-            estimate += 4 + topic.size() + 4 + 8 + 8 + 4 + key.size() + 4 + value.size();
+            auto hdrs = record.headers();
+            std::size_t hdrs_est = 4; // header_count
+            for (const auto& hdr : hdrs) {
+                hdrs_est += 4 + hdr.key.size() + 4 + hdr.value.size();
+            }
+            estimate += 4 + topic.size() + 4 + 8 + 8 + 4 + key.size() + 4 + value.size() + hdrs_est;
         }
         out.reserve(estimate);
         for (const auto& record : records) {
@@ -490,6 +554,19 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             if (value.size() > 0) {
                 const auto* value_ptr = static_cast<const std::uint8_t*>(value.data());
                 out.insert(out.end(), value_ptr, value_ptr + value.size());
+            }
+
+            // Headers
+            auto hdrs = record.headers();
+            append_u32_le(out, static_cast<std::uint32_t>(hdrs.size()));
+            for (const auto& hdr : hdrs) {
+                append_u32_le(out, static_cast<std::uint32_t>(hdr.key.size()));
+                out.insert(out.end(), hdr.key.begin(), hdr.key.end());
+                append_u32_le(out, static_cast<std::uint32_t>(hdr.value.size()));
+                if (hdr.value.size() > 0) {
+                    auto* p = static_cast<const std::uint8_t*>(hdr.value.data());
+                    out.insert(out.end(), p, p + hdr.value.size());
+                }
             }
         }
         return out;

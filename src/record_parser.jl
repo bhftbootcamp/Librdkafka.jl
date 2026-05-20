@@ -69,8 +69,29 @@ function _parse_one_record!(c::_Cursor)
     value = value_len == 0 ? UInt8[] : copy(@view raw[i:(i + value_len - 1)])
     i += value_len
 
+    # Headers
+    header_count_u, i = _read_u32_le(raw, i)
+    header_count = Int(header_count_u)
+    headers = Pair{String,Vector{UInt8}}[]
+    sizehint!(headers, header_count)
+    for _ in 1:header_count
+        hkey_len_u, i = _read_u32_le(raw, i)
+        hkey_len = Int(hkey_len_u)
+        i + hkey_len - 1 <= n || _parse_error("unexpected end", i)
+        hkey = hkey_len == 0 ? "" : String(copy(@view raw[i:(i + hkey_len - 1)]))
+        i += hkey_len
+
+        hval_len_u, i = _read_u32_le(raw, i)
+        hval_len = Int(hval_len_u)
+        i + hval_len - 1 <= n || _parse_error("unexpected end", i)
+        hval = hval_len == 0 ? UInt8[] : copy(@view raw[i:(i + hval_len - 1)])
+        i += hval_len
+
+        push!(headers, hkey => hval)
+    end
+
     c.i = i
-    return ConsumerRecord(Topic(topic), Partition(partition), Int(offset_i64), key, value, Int(timestamp_i64))
+    return ConsumerRecord(Topic(topic), Partition(partition), Int(offset_i64), key, value, Int(timestamp_i64), headers)
 end
 
 function _parse_records(raw::AbstractVector{UInt8})

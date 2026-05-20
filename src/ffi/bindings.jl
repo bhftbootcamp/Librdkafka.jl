@@ -13,6 +13,7 @@ export create_properties,
 export create_kafka_producer,
     producer_close,
     produce,
+    produce_with_headers,
     producer_set_log_level
 
 export create_kafka_consumer,
@@ -60,6 +61,12 @@ producer_close(id::Integer) = _cpp_call(:producer_close, Int(id))
 
 produce(id::Integer, topic::AbstractString, partition::Integer, key::AbstractString, value::Vector{UInt8}) =
     _cpp_call(:produce, Int(id), String(topic), Int(partition), String(key), value)
+
+produce_with_headers(id::Integer, topic::AbstractString, partition::Integer,
+                     key::AbstractString, value::Vector{UInt8},
+                     headers_blob::Vector{UInt8}) =
+    _cpp_call(:produce_with_headers, Int(id), String(topic), Int(partition),
+              String(key), value, headers_blob)
 
 producer_set_log_level(id::Integer, level::Integer) =
     _cpp_call(:producer_set_log_level, Int(id), Int(level))

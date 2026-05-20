@@ -176,7 +176,7 @@ function commit_record(c::KafkaConsumer, r::ConsumerRecord)
 end
 
 commit_record(c::KafkaConsumer, topic::AbstractString, partition::Integer, offset::Integer) =
-    commit_record(c, ConsumerRecord(Topic(topic), Partition(partition), Int(offset), "", UInt8[], 0))
+    commit_record(c, ConsumerRecord(Topic(topic), Partition(partition), Int(offset), "", UInt8[], 0, Pair{String,Vector{UInt8}}[]))
 
 """
     seek_to_beginning!
