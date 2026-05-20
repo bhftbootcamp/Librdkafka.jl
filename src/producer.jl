@@ -55,12 +55,7 @@ _to_header_value(v::AbstractString) = Vector{UInt8}(codeunits(v))
 _to_header_value(v::AbstractVector{UInt8}) = Vector{UInt8}(v)
 _to_header_value(v) = Vector{UInt8}(string(v))
 
-"""
-    _normalize_headers(headers) -> KafkaHeaders
-
-Convert user-friendly headers to the canonical `KafkaHeaders` format.
-Values can be strings, numbers, or raw bytes — anything gets converted to `Vector{UInt8}`.
-"""
+# Convert user-friendly headers to canonical KafkaHeaders format.
 function _normalize_headers(headers)::KafkaHeaders
     result = Pair{String,Vector{UInt8}}[]
     sizehint!(result, length(headers))
@@ -71,12 +66,7 @@ function _normalize_headers(headers)::KafkaHeaders
 end
 _normalize_headers(headers::KafkaHeaders) = headers
 
-"""
-    _serialize_headers(headers) -> Vector{UInt8}
-
-Serialize a `KafkaHeaders` list into the flat binary format expected by the C++ layer:
-`u32_le(count) ++ N × (u32_le(key_len) ++ key_bytes ++ u32_le(val_len) ++ val_bytes)`.
-"""
+# Serialize KafkaHeaders into flat binary for C++ layer.
 function _serialize_headers(headers::KafkaHeaders)
     n = 4
     for (k, v) in headers
