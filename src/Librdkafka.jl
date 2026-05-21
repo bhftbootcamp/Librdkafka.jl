@@ -126,6 +126,7 @@ include("consumer.jl")
 include("logging.jl")
 
 function __init__()
+    ccall(:jl_generating_output, Cint, ()) == 1 && return
     enable_default_logs!()
 end
 
