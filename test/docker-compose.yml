@@ -2,7 +2,7 @@
 # Kafka-API compatible; no ZooKeeper needed.
 #
 # Usage from the repo root:
-#     docker compose -f test/docker-compose.yml up -d
+#     docker compose -f test/docker-compose.yml up -d --wait
 #     KAFKA_BOOTSTRAP_SERVERS=localhost:9092 julia --project=. -e 'using Pkg; Pkg.test()'
 #     docker compose -f test/docker-compose.yml down -v
 
@@ -15,14 +15,13 @@ services:
       - start
       - --overprovisioned
       - --smp=1
-      - --memory=512M
-      - --reserve-memory=0M
+      - --memory=1G
       - --node-id=0
       - --check=false
       - --kafka-addr=PLAINTEXT://0.0.0.0:9092
       - --advertise-kafka-addr=PLAINTEXT://localhost:9092
-      - --set=redpanda.auto_create_topics_enabled=true
-      - --set=redpanda.group_initial_rebalance_delay=0
+      - --set                                                  
+      - redpanda.auto_create_topics_enabled=true
     ports:
       - "9092:9092"
     healthcheck:

@@ -88,6 +88,7 @@ Librdkafka.KafkaClientError
 Librdkafka.KafkaError
 Librdkafka.KafkaProducer
 Librdkafka.KafkaConsumer
+Librdkafka.KafkaHeaders
 Librdkafka.produce
 Librdkafka.subscribe!
 Librdkafka.assign!
@@ -103,6 +104,20 @@ Librdkafka.log_stdout!
 Librdkafka.log_julia!
 Librdkafka.log_file!
 Librdkafka.enable_default_logs!
+```
+
+### Configuration constants
+
+```@docs
+Librdkafka.BOOTSTRAP_SERVERS
+Librdkafka.CLIENT_ID
+Librdkafka.GROUP_ID
+Librdkafka.AUTO_OFFSET_RESET
+Librdkafka.ENABLE_AUTO_COMMIT
+Librdkafka.RD_KAFKA_OFFSET_BEGINNING
+Librdkafka.RD_KAFKA_OFFSET_END
+Librdkafka.RD_KAFKA_OFFSET_INVALID
+Librdkafka.DEFAULT_LOG_FORMAT
 ```
 
 ### Internal FFI

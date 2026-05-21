@@ -53,6 +53,12 @@ function __init__()
     _STDVEC_CXXLL_T[]      = StdVector{CxxWrap.CxxWrapCore.CxxLongLong}
 end
 
+"""
+    make_topics_set(topic_names::Vector{String})
+
+Convert a Julia string vector to a C++ `std::set<std::string>` for use with
+`consumer_subscribe`.
+"""
 function make_topics_set(topic_names::Vector{String})
     SetT = _STDSET_STDSTRING_T[]::Type
     StringT = _STDSTRING_T[]::Type
