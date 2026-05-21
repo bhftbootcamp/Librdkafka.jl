@@ -13,7 +13,7 @@ consumer = KafkaConsumer(
     ),
 )
 
-subscribe(consumer, [topic])
+subscribe!(consumer, [topic])
 try
     while true
         for r in poll(consumer; timeout_ms=1000)

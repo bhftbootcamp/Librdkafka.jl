@@ -11,10 +11,15 @@ abstract type KafkaClientError <: Exception end
 Represents a Kafka client error raised by the wrapper.
 
 ## Fields
-- `kind::Symbol`: High-level error kind (for example `:usage` or `:operation`).
-- `operation::Symbol`: Operation that failed (for example `:produce`).
+- `kind::Symbol`: High-level error kind. Currently one of:
+    * `:state`     — operation called on a closed/uninitialized handle, or
+                     native handle construction failed.
+    * `:operation` — the librdkafka call returned a runtime error (broker
+                     failure, parse failure, protocol skew, etc.).
+- `operation::Symbol`: Operation that failed (for example `:produce`, `:poll`).
 - `message::String`: Human-readable error message.
-- `details::Vector{String}`: Additional details used for diagnostics.
+- `details::Vector{String}`: Additional details used for diagnostics (rendered
+  as `key=value` pairs).
 """
 struct KafkaError <: KafkaClientError
     kind::Symbol
@@ -45,18 +50,6 @@ function _details(pairs::Pair{Symbol, <:Any}...)
 end
 
 function _throw_error(kind::Symbol, operation::Symbol, message::AbstractString; details::Vector{String} = String[])
+    _flush_native_logs!()
     throw(KafkaError(kind, operation, String(message), details))
-end
-
-function _with_kafka_error(operation::Symbol, message::AbstractString, details::Vector{String}, f::Function)
-    try
-        return f()
-    catch e
-        _throw_error(:operation, operation, message,
-            details = vcat(details, "exception=$(e)"))
-    end
-end
-
-function _with_kafka_error(f::Function, operation::Symbol, message::AbstractString, details::Vector{String})
-    return _with_kafka_error(operation, message, details, f)
 end
