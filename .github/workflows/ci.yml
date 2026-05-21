@@ -90,10 +90,38 @@ jobs:
           run-precompile: 'true'
           run-tests: 'true'
 
+  integration_test:
+    name: Integration Tests (broker)
+    needs: [config, changes]
+    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+    steps:
+      - uses: actions/checkout@v6
+      - name: Start Redpanda broker
+        run: docker compose -f test/docker-compose.yml up -d --wait
+      - name: Build and test against broker
+        uses: ./.github/actions/build-test
+        with:
+          julia-version: '1.10'
+          lib-ext: so
+          run-precompile: 'true'
+          run-tests: 'true'
+      - name: Broker logs (on failure)
+        if: failure()
+        run: docker compose -f test/docker-compose.yml logs
+      - name: Stop broker
+        if: always()
+        run: docker compose -f test/docker-compose.yml down -v
+
   gate:
     name: CI Gate
     runs-on: ubuntu-24.04
-    needs: [config, changes, build_test]
+    needs: [config, changes, build_test, integration_test]
     if: ${{ always() }}
     steps:
       - name: Decide
@@ -102,13 +130,18 @@ jobs:
           set -euo pipefail
           echo "relevant_changes=${{ needs.changes.outputs.relevant }}"
           echo "build_test_result=${{ needs.build_test.result }}"
+          echo "integration_test_result=${{ needs.integration_test.result }}"
 
           if [[ "${{ needs.changes.outputs.relevant }}" == "true" ]]; then
             if [[ "${{ needs.build_test.result }}" != "success" ]]; then
               echo "ERROR: build/test failed"
               exit 1
             fi
-            echo "OK: build/test passed"
+            if [[ "${{ needs.integration_test.result }}" != "success" ]]; then
+              echo "ERROR: integration tests failed"
+              exit 1
+            fi
+            echo "OK: build/test and integration_test passed"
           else
             echo "OK: no relevant changes; build/test skipped"
           fi

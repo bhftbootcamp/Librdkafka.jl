@@ -8,6 +8,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (Release/Debug/RelWithDebInfo/MinSizeRel)" FORCE)
+endif()
+
 option(STATIC_DEPENDENCY_LINKING "Link external dependencies statically to avoid runtime shared library requirements" OFF)
 
 get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
@@ -406,6 +410,11 @@ set_target_properties(kafka PROPERTIES
 )
 
 target_compile_definitions(kafka PRIVATE USE_JLCXX)
+target_compile_options(kafka PRIVATE
+    $<$<CONFIG:Release>:-O3>
+    $<$<CONFIG:RelWithDebInfo>:-O2>
+)
+
 target_include_directories(kafka
     PRIVATE
         "${DEPS_ROOT}/include"

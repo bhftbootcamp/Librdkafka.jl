@@ -2,24 +2,23 @@
     Bindings
 
 Thin Julia wrappers around the CxxWrap-generated native functions.  Every public
-function here maps 1-to-1 to a C++ export from `libkafka`.  The indirection
-through `_cpp_call` lets us cache function lookups and keeps call-sites concise.
+function here maps 1-to-1 to a C++ export from `libkafka`; the wrapper exists
+only to coerce Julia argument types into the concrete types the C++ side expects.
 """
 module Bindings
 
 export create_properties,
-    properties_put
+    properties_put,
+    properties_destroy
 
 export create_kafka_producer,
     producer_close,
     produce,
-    produce_with_headers,
     producer_set_log_level
 
 export create_kafka_consumer,
     consumer_close,
     consumer_subscribe,
-    consumer_assign,
     consumer_assign_many,
     consumer_poll,
     consumer_commit_sync,
@@ -42,72 +41,60 @@ export get_bootstrap_servers,
 include("native.jl")
 using .Native
 
-const _FN_CACHE = Dict{Symbol,Function}()
-
-@inline function _raw(sym::Symbol)
-    get!(_FN_CACHE, sym) do
-        getfield(Native, sym)
-    end
-end
-
-@inline _cpp_call(sym::Symbol, args...) = (_raw(sym))(args...)
-
-create_properties() = _cpp_call(:create_properties)
+create_properties() = Native.create_properties()
 properties_put(props_id, key::AbstractString, val::AbstractString) =
-    _cpp_call(:properties_put, props_id, String(key), String(val))
+    Native.properties_put(props_id, String(key), String(val))
+properties_destroy(props_id) = Native.properties_destroy(props_id)
 
-create_kafka_producer(props_id) = _cpp_call(:create_kafka_producer, props_id)
-producer_close(id::Integer) = _cpp_call(:producer_close, Int(id))
+create_kafka_producer(props_id) = Native.create_kafka_producer(props_id)
+producer_close(id::Integer) = Native.producer_close(Int(id))
 
-produce(id::Integer, topic::AbstractString, partition::Integer, key::AbstractString, value::Vector{UInt8}) =
-    _cpp_call(:produce, Int(id), String(topic), Int(partition), String(key), value)
-
-produce_with_headers(id::Integer, topic::AbstractString, partition::Integer,
-                     key::AbstractString, value::Vector{UInt8},
-                     headers_blob::Vector{UInt8}) =
-    _cpp_call(:produce_with_headers, Int(id), String(topic), Int(partition),
-              String(key), value, headers_blob)
+produce(id::Integer, topic::AbstractString, partition::Integer, key::AbstractString,
+        value::Vector{UInt8}, headers_blob::Vector{UInt8}) =
+    Native.produce(Int(id), String(topic), Int(partition), String(key), value, headers_blob)
 
 producer_set_log_level(id::Integer, level::Integer) =
-    _cpp_call(:producer_set_log_level, Int(id), Int(level))
+    Native.producer_set_log_level(Int(id), Int(level))
 
-create_kafka_consumer(props_id) = _cpp_call(:create_kafka_consumer, props_id)
-consumer_close(id::Integer) = _cpp_call(:consumer_close, Int(id))
+create_kafka_consumer(props_id) = Native.create_kafka_consumer(props_id)
+consumer_close(id::Integer) = Native.consumer_close(Int(id))
 
 consumer_subscribe(id::Integer, topics_set) =
-    _cpp_call(:consumer_subscribe, Int(id), topics_set)
+    Native.consumer_subscribe(Int(id), topics_set)
 
-consumer_assign(id::Integer, topic::AbstractString, partition::Integer, offset::Integer) =
-    _cpp_call(:consumer_assign, Int(id), String(topic), Int(partition), Int(offset))
+consumer_assign_many(id::Integer, topics::Vector{String}, partitions::Vector{Int32}, offsets::Vector{Int64}) =
+    Native.consumer_assign_many(Int(id),
+                                Native.to_std_vector_string(topics),
+                                Native.to_std_vector_int32(partitions),
+                                Native.to_std_vector_longlong(offsets))
 
-consumer_assign_many(id::Integer, topics::Vector{String}, partitions::Vector{Int}, offsets::Vector{Int64}) =
-    _cpp_call(:consumer_assign_many, Int(id), topics, partitions, offsets)
+function consumer_poll(id::Integer, timeout_ms::Integer)
+    raw = Native.consumer_poll_raw(Int(id), Int(timeout_ms))
+    return Vector{UInt8}(raw)
+end
 
-consumer_poll(id::Integer, timeout_ms::Integer) =
-    _cpp_call(:consumer_poll_raw, Int(id), Int(timeout_ms))
-
-consumer_commit_sync(id::Integer) = _cpp_call(:consumer_commit_sync, Int(id))
+consumer_commit_sync(id::Integer) = Native.consumer_commit_sync(Int(id))
 
 consumer_commit_record(id::Integer, topic::AbstractString, partition::Integer, offset::Integer) =
-    _cpp_call(:consumer_commit_record, Int(id), String(topic), Int(partition), Int(offset))
+    Native.consumer_commit_record(Int(id), String(topic), Int(partition), Int(offset))
 
 consumer_seek_to_beginning(id::Integer, topic::AbstractString, partition::Integer) =
-    _cpp_call(:consumer_seek_to_beginning, Int(id), String(topic), Int(partition))
+    Native.consumer_seek_to_beginning(Int(id), String(topic), Int(partition))
 
 consumer_seek_to_end(id::Integer, topic::AbstractString, partition::Integer) =
-    _cpp_call(:consumer_seek_to_end, Int(id), String(topic), Int(partition))
+    Native.consumer_seek_to_end(Int(id), String(topic), Int(partition))
 
 consumer_set_log_level(id::Integer, level::Integer) =
-    _cpp_call(:consumer_set_log_level, Int(id), Int(level))
+    Native.consumer_set_log_level(Int(id), Int(level))
 
-logging_disable() = _cpp_call(:logging_disable)
-logging_set_format(fmt::AbstractString) = _cpp_call(:logging_set_format, String(fmt))
-logging_set_stdout() = _cpp_call(:logging_set_stdout)
-logging_set_julia() = _cpp_call(:logging_set_julia)
-logging_set_file(path::AbstractString, append::Bool) = _cpp_call(:logging_set_file, String(path), append)
-logging_drain() = _cpp_call(:logging_drain)
-logging_enable_default() = _cpp_call(:logging_enable_default)
+logging_disable() = Native.logging_disable()
+logging_set_format(fmt::AbstractString) = Native.logging_set_format(String(fmt))
+logging_set_stdout() = Native.logging_set_stdout()
+logging_set_julia() = Native.logging_set_julia()
+logging_set_file(path::AbstractString, append::Bool) = Native.logging_set_file(String(path), append)
+logging_drain() = Native.logging_drain()
+logging_enable_default() = Native.logging_enable_default()
 
-get_bootstrap_servers() = _cpp_call(:get_bootstrap_servers)
+get_bootstrap_servers() = Native.get_bootstrap_servers()
 
 end

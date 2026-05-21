@@ -22,16 +22,7 @@ export log_level!
 export disable_logs!, log_format!, log_stdout!, log_julia!, log_file!, enable_default_logs!
 export get_bootstrap_servers
 
-const BOOTSTRAP_SERVERS = "bootstrap.servers"
-const CLIENT_ID = "client.id"
-const GROUP_ID = "group.id"
-const AUTO_OFFSET_RESET = "auto.offset.reset"
-const ENABLE_AUTO_COMMIT = "enable.auto.commit"
-
-const RD_KAFKA_OFFSET_BEGINNING = -2
-const RD_KAFKA_OFFSET_END = -1
-const RD_KAFKA_OFFSET_INVALID = -1001
-const DEFAULT_LOG_FORMAT = "{timestamp} [{level}] {message}"
+include("constants.jl")
 
 using Dates
 
@@ -43,23 +34,27 @@ struct Topic
         new(s)
     end
 end
-Base.show(io::IO, t::Topic) = print(io, t.name)
+Base.print(io::IO, t::Topic) = print(io, t.name)
+Base.show(io::IO, t::Topic) = print(io, "Topic(\"", t.name, "\")")
 
 struct Partition
     id::Int
     function Partition(id::Integer)
         i = Int(id)
         i < 0 && throw(DomainError(i, "Partition id must be non-negative."))
+        i > typemax(Int32) && throw(DomainError(i, "Partition id exceeds Int32 range."))
         new(i)
     end
 end
-Base.show(io::IO, p::Partition) = print(io, p.id)
+Base.print(io::IO, p::Partition) = print(io, p.id)
+Base.show(io::IO, p::Partition) = print(io, "Partition(", p.id, ")")
 
 struct TopicPartition
     topic::Topic
     partition::Partition
 end
-Base.show(io::IO, tp::TopicPartition) = print(io, tp.topic.name, ":", tp.partition.id)
+Base.print(io::IO, tp::TopicPartition) = print(io, tp.topic.name, ":", tp.partition.id)
+Base.show(io::IO, tp::TopicPartition) = print(io, "TopicPartition(\"", tp.topic.name, "\", ", tp.partition.id, ")")
 TopicPartition(topic::AbstractString, partition::Integer) = TopicPartition(Topic(topic), Partition(partition))
 
 struct Assignment
@@ -69,9 +64,11 @@ struct Assignment
         new(tp, Int(offset))
     end
 end
-Base.show(io::IO, a::Assignment) = print(io, a.topic_partition, " @", a.offset)
+Base.show(io::IO, a::Assignment) = print(io, "Assignment(", a.topic_partition, " @", a.offset, ")")
 
 const KafkaHeaders = Vector{Pair{String,Vector{UInt8}}}
+const _EMPTY_HEADERS = KafkaHeaders()
+const _NO_TIMESTAMP_MS = -1
 
 struct ConsumerRecord
     topic::Topic
@@ -83,12 +80,20 @@ struct ConsumerRecord
     headers::KafkaHeaders
 end
 
+ConsumerRecord(topic::Topic, partition::Partition, offset::Int, key::String,
+               value::Vector{UInt8}, timestamp_ms::Int) =
+    ConsumerRecord(topic, partition, offset, key, value, timestamp_ms, _EMPTY_HEADERS)
+
 function Base.show(io::IO, r::ConsumerRecord)
-    ts = Dates.unix2datetime(r.timestamp_ms / 1000)
-    nh = length(r.headers)
     print(io, "ConsumerRecord(", r.topic.name, ":", r.partition.id, " @", r.offset,
-        ", key=\"", r.key, "\", value_bytes=", length(r.value),
-        ", headers=", nh, ", ts=", ts, ")")
+        ", key=\"", r.key, "\", value_bytes=", length(r.value))
+    isempty(r.headers) || print(io, ", headers=", length(r.headers))
+    if r.timestamp_ms == _NO_TIMESTAMP_MS
+        print(io, ", ts=n/a")
+    else
+        print(io, ", ts=", Dates.unix2datetime(r.timestamp_ms / 1000))
+    end
+    print(io, ")")
 end
 
 include("errors.jl")

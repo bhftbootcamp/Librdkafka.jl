@@ -1,0 +1,32 @@
+# Single-node Redpanda broker for local integration tests.
+# Kafka-API compatible; no ZooKeeper needed.
+#
+# Usage from the repo root:
+#     docker compose -f test/docker-compose.yml up -d
+#     KAFKA_BOOTSTRAP_SERVERS=localhost:9092 julia --project=. -e 'using Pkg; Pkg.test()'
+#     docker compose -f test/docker-compose.yml down -v
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.10
+    container_name: librdkafka-jl-test-broker
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://localhost:9092
+      - --set=redpanda.auto_create_topics_enabled=true
+      - --set=redpanda.group_initial_rebalance_delay=0
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info", "--brokers=localhost:9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
