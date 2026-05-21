@@ -6,6 +6,7 @@ using Logging: @logmsg, Error, Warn, Info, Debug
 
 const _NATIVE_LOG_SEPARATOR = '\x1f'
 const _NATIVE_LOG_TIMER = Ref{Union{Nothing,Timer}}(nothing)
+const _NATIVE_LOG_TIMER_LOCK = ReentrantLock()
 
 _native_log_level(level::Integer) =
     level <= 3 ? Error : level == 4 ? Warn : level <= 6 ? Info : Debug
@@ -46,16 +47,20 @@ function _flush_native_logs!()
 end
 
 function _start_native_log_timer!()
-    _NATIVE_LOG_TIMER[] === nothing || return nothing
-    _NATIVE_LOG_TIMER[] = Timer(_ -> _flush_native_logs!(), 0.0; interval = 0.05)
+    @lock _NATIVE_LOG_TIMER_LOCK begin
+        _NATIVE_LOG_TIMER[] === nothing || return nothing
+        _NATIVE_LOG_TIMER[] = Timer(_ -> _flush_native_logs!(), 0.0; interval = 0.05)
+    end
     return nothing
 end
 
 function _stop_native_log_timer!()
-    t = _NATIVE_LOG_TIMER[]
-    t === nothing && return nothing
-    close(t)
-    _NATIVE_LOG_TIMER[] = nothing
+    @lock _NATIVE_LOG_TIMER_LOCK begin
+        t = _NATIVE_LOG_TIMER[]
+        t === nothing && return nothing
+        close(t)
+        _NATIVE_LOG_TIMER[] = nothing
+    end
     return nothing
 end
 

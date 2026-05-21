@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
 #include <ctime>
 #include <deque>
 #include <exception>
@@ -30,6 +31,7 @@
 #include "../include/kafka/Properties.h"
 #include "../include/kafka/ProducerRecord.h"
 #include "../include/kafka/ConsumerRecord.h"
+#include "../include/kafka/Header.h"
 #include "../include/kafka/Error.h"
 #include "../include/kafka/KafkaProducer.h"
 #include "../include/kafka/KafkaConsumer.h"
@@ -132,7 +134,9 @@ std::ostream* log_stream(LogState& state)
 
 void write_to_julia_stdout(const std::string& line)
 {
-    jl_printf(jl_stdout_stream(), "%s\n", line.c_str());
+    std::fwrite(line.data(), 1, line.size(), stdout);
+    std::fputc('\n', stdout);
+    std::fflush(stdout);
 }
 
 std::string encode_julia_log(int level, const char* filename, int lineno, const char* msg)
@@ -232,8 +236,21 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         if (it == properties_store.end()) {
             return false;
         }
-        it->second->put(key, value);
+        try {
+            it->second->put(key, value);
+        } catch (const std::exception& e) {
+            emit_log(3, __FILE__, __LINE__, e.what());
+            return false;
+        } catch (...) {
+            emit_log(3, __FILE__, __LINE__, "properties_put: unknown exception");
+            return false;
+        }
         return true;
+    });
+
+    mod.method("properties_destroy", [](int props_id) -> bool {
+        std::lock_guard<std::mutex> guard(store_mutex);
+        return properties_store.erase(props_id) > 0;
     });
     mod.method("create_kafka_producer", [](int props_id) -> int {
         std::shared_ptr<kafka::Properties> props;
@@ -247,13 +264,21 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         if (!props->contains("log_cb")) {
             props->put("log_cb", global_log_callback());
         }
-        const int id = next_id.fetch_add(1);
-        auto producer = std::make_shared<kafka::clients::producer::KafkaProducer>(*props);
-        {
-            std::lock_guard<std::mutex> guard(store_mutex);
-            producer_store[id] = std::move(producer);
+        try {
+            auto producer = std::make_shared<kafka::clients::producer::KafkaProducer>(*props);
+            const int id = next_id.fetch_add(1);
+            {
+                std::lock_guard<std::mutex> guard(store_mutex);
+                producer_store[id] = std::move(producer);
+            }
+            return id;
+        } catch (const std::exception& e) {
+            emit_log(3, __FILE__, __LINE__, e.what());
+            return 0;
+        } catch (...) {
+            emit_log(3, __FILE__, __LINE__, "create_kafka_producer: unknown exception");
+            return 0;
         }
-        return id;
     });
 
     mod.method("producer_close", [](int producer_id) -> bool {
@@ -269,7 +294,10 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         }
         try {
             producer->close();
+        } catch (const std::exception& e) {
+            emit_log(4, __FILE__, __LINE__, e.what());
         } catch (...) {
+            emit_log(4, __FILE__, __LINE__, "producer_close: unknown exception");
         }
         return true;
     });
@@ -292,6 +320,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         auto& state = log_state();
         std::lock_guard<std::mutex> guard(state.mutex);
         state.enabled = false;
+        state.pending_julia_logs.clear();
     });
 
     mod.method("logging_set_format", [](const std::string& fmt) {
@@ -309,6 +338,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         state.file.reset();
         state.file_path.clear();
         state.enabled = true;
+        state.pending_julia_logs.clear();
     });
 
     mod.method("logging_set_julia", []() {
@@ -348,6 +378,7 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         state.file = std::move(file);
         state.sink = LogSink::File;
         state.enabled = true;
+        state.pending_julia_logs.clear();
         return true;
     });
 
@@ -367,7 +398,8 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     });
 
     mod.method("produce", [](int producer_id, const std::string& topic, int partition,
-                             const std::string& key, jlcxx::ArrayRef<uint8_t> value) -> std::string {
+                             const std::string& key, jlcxx::ArrayRef<uint8_t> value,
+                             jlcxx::ArrayRef<uint8_t> headers_blob) -> std::string {
         std::shared_ptr<kafka::clients::producer::KafkaProducer> producer;
         {
             std::lock_guard<std::mutex> guard(store_mutex);
@@ -382,6 +414,41 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             kafka::Key(key.data(), key.size()),
             kafka::Value(value.data(), value.size())
         );
+
+        const auto* blob = headers_blob.data();
+        const std::size_t blob_len = headers_blob.size();
+        if (blob_len >= 4) {
+            std::size_t pos = 0;
+            auto read_u32 = [&]() -> std::uint32_t {
+                if (pos + 4 > blob_len) throw std::runtime_error("headers_blob truncated");
+                std::uint32_t v = static_cast<std::uint32_t>(blob[pos])
+                    | (static_cast<std::uint32_t>(blob[pos + 1]) << 8)
+                    | (static_cast<std::uint32_t>(blob[pos + 2]) << 16)
+                    | (static_cast<std::uint32_t>(blob[pos + 3]) << 24);
+                pos += 4;
+                return v;
+            };
+
+            const std::uint32_t count = read_u32();
+            if (count > (blob_len - pos) / 8) {
+                throw std::runtime_error("headers_blob: header count exceeds available bytes");
+            }
+            record.headers().reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const std::uint32_t key_len = read_u32();
+                if (pos + key_len > blob_len) throw std::runtime_error("headers_blob truncated");
+                std::string hkey(reinterpret_cast<const char*>(blob + pos), key_len);
+                pos += key_len;
+
+                const std::uint32_t val_len = read_u32();
+                if (pos + val_len > blob_len) throw std::runtime_error("headers_blob truncated");
+                // ConstBuffer points into headers_blob — data is alive until syncSend copies it
+                record.headers().emplace_back(std::move(hkey),
+                    kafka::ConstBuffer(blob + pos, val_len));
+                pos += val_len;
+            }
+        }
+
         try {
             producer->syncSend(record);
             return "";
@@ -404,13 +471,21 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         if (!props->contains("log_cb")) {
             props->put("log_cb", global_log_callback());
         }
-        const int id = next_id.fetch_add(1);
-        auto consumer = std::make_shared<kafka::clients::consumer::KafkaConsumer>(*props);
-        {
-            std::lock_guard<std::mutex> guard(store_mutex);
-            consumer_store[id] = std::move(consumer);
+        try {
+            auto consumer = std::make_shared<kafka::clients::consumer::KafkaConsumer>(*props);
+            const int id = next_id.fetch_add(1);
+            {
+                std::lock_guard<std::mutex> guard(store_mutex);
+                consumer_store[id] = std::move(consumer);
+            }
+            return id;
+        } catch (const std::exception& e) {
+            emit_log(3, __FILE__, __LINE__, e.what());
+            return 0;
+        } catch (...) {
+            emit_log(3, __FILE__, __LINE__, "create_kafka_consumer: unknown exception");
+            return 0;
         }
-        return id;
     });
 
     mod.method("consumer_set_log_level", [](int consumer_id, int level) -> bool {
@@ -437,7 +512,15 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             }
             consumer = it->second;
         }
-        consumer->subscribe(topics);
+        try {
+            consumer->subscribe(topics);
+        } catch (const std::exception& e) {
+            emit_log(3, __FILE__, __LINE__, e.what());
+            return false;
+        } catch (...) {
+            emit_log(3, __FILE__, __LINE__, "consumer_subscribe: unknown exception");
+            return false;
+        }
         return true;
     });
 
@@ -453,27 +536,26 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         }
         auto records = consumer->poll(std::chrono::milliseconds(timeout_ms));
         std::vector<std::uint8_t> out;
-        std::size_t estimate = 0;
+        out.reserve(records.size() * 256);
+
         for (const auto& record : records) {
-            const auto& topic = record.topic();
-            const auto key = record.key();
-            const auto value = record.value();
-            estimate += 4 + topic.size() + 4 + 8 + 8 + 4 + key.size() + 4 + value.size();
-        }
-        out.reserve(estimate);
-        for (const auto& record : records) {
-            const auto& topic = record.topic();
+            if (record.error()) {
+                continue;
+            }
+
+            auto topic = record.topic();
+            auto hdrs = record.headers();
             const auto key = record.key();
             const auto value = record.value();
 
-            if (topic.size() > std::numeric_limits<std::uint32_t>::max()) {
-                throw std::runtime_error("Topic name too large for raw encoding.");
+            if (topic.empty()) {
+                continue;
             }
-            if (key.size() > std::numeric_limits<std::uint32_t>::max()) {
-                throw std::runtime_error("Key too large for raw encoding.");
-            }
-            if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
-                throw std::runtime_error("Value too large for raw encoding.");
+            if (topic.size() > std::numeric_limits<std::uint32_t>::max() ||
+                key.size() > std::numeric_limits<std::uint32_t>::max() ||
+                value.size() > std::numeric_limits<std::uint32_t>::max() ||
+                hdrs.size() > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::runtime_error("Record field too large for raw encoding.");
             }
 
             append_u32_le(out, static_cast<std::uint32_t>(topic.size()));
@@ -491,6 +573,17 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
                 const auto* value_ptr = static_cast<const std::uint8_t*>(value.data());
                 out.insert(out.end(), value_ptr, value_ptr + value.size());
             }
+
+            append_u32_le(out, static_cast<std::uint32_t>(hdrs.size()));
+            for (const auto& hdr : hdrs) {
+                append_u32_le(out, static_cast<std::uint32_t>(hdr.key.size()));
+                out.insert(out.end(), hdr.key.begin(), hdr.key.end());
+                append_u32_le(out, static_cast<std::uint32_t>(hdr.value.size()));
+                if (hdr.value.size() > 0) {
+                    auto* p = static_cast<const std::uint8_t*>(hdr.value.data());
+                    out.insert(out.end(), p, p + hdr.value.size());
+                }
+            }
         }
         return out;
     });
@@ -505,7 +598,15 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             }
             consumer = it->second;
         }
-        consumer->commitSync();
+        try {
+            consumer->commitSync();
+        } catch (const std::exception& e) {
+            emit_log(3, __FILE__, __LINE__, e.what());
+            return -2;
+        } catch (...) {
+            emit_log(3, __FILE__, __LINE__, "consumer_commit_sync: unknown exception");
+            return -2;
+        }
         return 0;
     });
 
@@ -522,30 +623,14 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         }
         try {
             consumer->close();
+        } catch (const std::exception& e) {
+            emit_log(4, __FILE__, __LINE__, e.what());
         } catch (...) {
+            emit_log(4, __FILE__, __LINE__, "consumer_close: unknown exception");
         }
         return true;
     });
 
-
-    mod.method("consumer_assign", [](int consumer_id, const std::string& topic, int partition, long long offset) -> bool {
-        std::shared_ptr<kafka::clients::consumer::KafkaConsumer> consumer;
-        {
-            std::lock_guard<std::mutex> guard(store_mutex);
-            auto it = consumer_store.find(consumer_id);
-            if (it == consumer_store.end()) {
-                return false;
-            }
-            consumer = it->second;
-        }
-        kafka::TopicPartitionOffsets tpos;
-        tpos[kafka::TopicPartition(topic, partition)] = offset;
-        consumer->assign(kafka::TopicPartitions{tpos.begin()->first});
-        if (offset != RD_KAFKA_OFFSET_INVALID) {
-            consumer->seek(kafka::TopicPartition(topic, partition), offset);
-        }
-        return true;
-    });
 
     mod.method("consumer_assign_many", [](int consumer_id, const std::vector<std::string>& topics,
                                           const std::vector<int>& partitions, const std::vector<long long>& offsets) -> bool {
@@ -562,16 +647,24 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             consumer = it->second;
         }
 
-        kafka::TopicPartitions tps;
-        for (std::size_t i = 0; i < topics.size(); ++i) {
-            tps.emplace(topics[i], partitions[i]);
-        }
-        consumer->assign(tps);
-
-        for (std::size_t i = 0; i < topics.size(); ++i) {
-            if (offsets[i] != RD_KAFKA_OFFSET_INVALID) {
-                consumer->seek(kafka::TopicPartition(topics[i], partitions[i]), offsets[i]);
+        try {
+            kafka::TopicPartitions tps;
+            for (std::size_t i = 0; i < topics.size(); ++i) {
+                tps.emplace(topics[i], partitions[i]);
             }
+            consumer->assign(tps);
+
+            for (std::size_t i = 0; i < topics.size(); ++i) {
+                if (offsets[i] != RD_KAFKA_OFFSET_INVALID) {
+                    consumer->seek(kafka::TopicPartition(topics[i], partitions[i]), offsets[i]);
+                }
+            }
+        } catch (const std::exception& e) {
+            emit_log(3, __FILE__, __LINE__, e.what());
+            return false;
+        } catch (...) {
+            emit_log(3, __FILE__, __LINE__, "consumer_assign_many: unknown exception");
+            return false;
         }
         return true;
     });
@@ -586,8 +679,16 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             }
             consumer = it->second;
         }
-        kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
-        consumer->seekToBeginning(partitions);
+        try {
+            kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
+            consumer->seekToBeginning(partitions);
+        } catch (const std::exception& e) {
+            emit_log(3, __FILE__, __LINE__, e.what());
+            return false;
+        } catch (...) {
+            emit_log(3, __FILE__, __LINE__, "consumer_seek_to_beginning: unknown exception");
+            return false;
+        }
         return true;
     });
 
@@ -601,8 +702,16 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             }
             consumer = it->second;
         }
-        kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
-        consumer->seekToEnd(partitions);
+        try {
+            kafka::TopicPartitions partitions{kafka::TopicPartition(topic, partition)};
+            consumer->seekToEnd(partitions);
+        } catch (const std::exception& e) {
+            emit_log(3, __FILE__, __LINE__, e.what());
+            return false;
+        } catch (...) {
+            emit_log(3, __FILE__, __LINE__, "consumer_seek_to_end: unknown exception");
+            return false;
+        }
         return true;
     });
 
@@ -616,9 +725,17 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             }
             consumer = it->second;
         }
-        kafka::TopicPartitionOffsets tpos;
-        tpos[kafka::TopicPartition(topic, partition)] = offset + 1;
-        consumer->commitSync(tpos);
+        try {
+            kafka::TopicPartitionOffsets tpos;
+            tpos[kafka::TopicPartition(topic, partition)] = offset + 1;
+            consumer->commitSync(tpos);
+        } catch (const std::exception& e) {
+            emit_log(3, __FILE__, __LINE__, e.what());
+            return false;
+        } catch (...) {
+            emit_log(3, __FILE__, __LINE__, "consumer_commit_record: unknown exception");
+            return false;
+        }
         return true;
     });
 }

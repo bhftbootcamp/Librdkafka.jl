@@ -1,6 +1,6 @@
 module Native
 
-export make_topics_set
+export make_topics_set, to_std_vector_string, to_std_vector_int32, to_std_vector_longlong
 
 using CxxWrap, Libdl
 using librdkafka_jll, CyrusSASL_jll
@@ -35,25 +35,61 @@ end
 
 @wrapmodule(_locate)
 
+const _STDSTRING_T          = Ref{Any}()
+const _STDSET_STDSTRING_T   = Ref{Any}()
+const _STDVEC_STDSTRING_T   = Ref{Any}()
+const _STDVEC_INT32_T       = Ref{Any}()
+const _STDVEC_CXXLL_T       = Ref{Any}()
+const _CXXLONGLONG_T        = Ref{Any}()
+
 function __init__()
     _preload_deps()
     @initcxx
+    _STDSTRING_T[]         = StdString
+    _STDSET_STDSTRING_T[]  = StdSet{StdString}
+    _STDVEC_STDSTRING_T[]  = StdVector{StdString}
+    _STDVEC_INT32_T[]      = StdVector{Int32}
+    _CXXLONGLONG_T[]       = CxxWrap.CxxWrapCore.CxxLongLong
+    _STDVEC_CXXLL_T[]      = StdVector{CxxWrap.CxxWrapCore.CxxLongLong}
 end
 
-"""
-    make_topics_set
-
-Convert a Julia string vector to a C++ `std::set<std::string>` for use with
-`consumer_subscribe`.
-"""
 function make_topics_set(topic_names::Vector{String})
-    StdSet    = getfield(@__MODULE__, :StdSet)
-    StdString = getfield(@__MODULE__, :StdString)
-    s = Base.invokelatest(StdSet{StdString})
+    SetT = _STDSET_STDSTRING_T[]::Type
+    StringT = _STDSTRING_T[]::Type
+    s = SetT()
     for t in topic_names
-        Base.invokelatest(push!, s, Base.invokelatest(StdString, t))
+        push!(s, StringT(t))
     end
     return s
+end
+
+function to_std_vector_string(xs::Vector{String})
+    VecT = _STDVEC_STDSTRING_T[]::Type
+    StringT = _STDSTRING_T[]::Type
+    v = VecT()
+    for x in xs
+        push!(v, StringT(x))
+    end
+    return v
+end
+
+function to_std_vector_int32(xs::Vector{Int32})
+    VecT = _STDVEC_INT32_T[]::Type
+    v = VecT()
+    for x in xs
+        push!(v, x)
+    end
+    return v
+end
+
+function to_std_vector_longlong(xs::Vector{Int64})
+    VecT = _STDVEC_CXXLL_T[]::Type
+    LLT = _CXXLONGLONG_T[]::Type
+    v = VecT()
+    for x in xs
+        push!(v, LLT(x))
+    end
+    return v
 end
 
 end

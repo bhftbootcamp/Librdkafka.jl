@@ -127,6 +127,33 @@ finally
 end
 ```
 
+### Message headers
+
+`produce` accepts an optional `headers` keyword. Values may be `Vector{UInt8}`,
+`AbstractString`, `Integer`, or anything else convertible via `string`. Keys
+may be any `AbstractString` or `Symbol`. Header order is preserved.
+
+```julia
+produce(p, "events", 0, "trace-1", "payload";
+    headers = [
+        "content-type" => "application/json",
+        "version"      => 2,
+        :trace_id      => "abc123",
+        "binary-tag"   => UInt8[0xDE, 0xAD, 0xBE, 0xEF],
+    ])
+```
+
+On the consumer side, each `ConsumerRecord` has a `headers::KafkaHeaders` field
+(a `Vector{Pair{String,Vector{UInt8}}}`):
+
+```julia
+for r in poll(c)
+    for (k, v) in r.headers
+        @info "header" key=k value=String(copy(v))
+    end
+end
+```
+
 ## Useful Links
 
 - [librdkafka](https://github.com/confluentinc/librdkafka) – Official library repository.
