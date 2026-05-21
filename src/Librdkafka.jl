@@ -66,6 +66,20 @@ struct Assignment
 end
 Base.show(io::IO, a::Assignment) = print(io, "Assignment(", a.topic_partition, " @", a.offset, ")")
 
+"""
+    KafkaHeaders = Vector{Pair{String,Vector{UInt8}}}
+
+Canonical Kafka header collection: an ordered list of `(UTF-8 key, raw bytes value)`
+pairs. `ConsumerRecord.headers` is always a `KafkaHeaders`. `produce` accepts any
+iterable of pairs that can be normalized (Dict, NamedTuple, `Vector{Pair{...,...}}`,
+tuple of tuples); values may be `Vector{UInt8}`, `AbstractString`, `Integer`, or
+anything convertible via `string`.
+
+!!! note
+    For empty headers the parser returns a shared sentinel; do not mutate
+    `r.headers` in place when `isempty(r.headers)`. Construct a fresh
+    `KafkaHeaders()` first.
+"""
 const KafkaHeaders = Vector{Pair{String,Vector{UInt8}}}
 const _EMPTY_HEADERS = KafkaHeaders()
 const _NO_TIMESTAMP_MS = -1
