@@ -213,15 +213,8 @@ jobs:
           version: '1.10'
 
       - uses: julia-actions/cache@v3
-
-      - name: Ensure General registry uses tarball format
-        run: |
-          if [ -d "$HOME/.julia/registries/General/.git" ]; then
-            echo "General registry is git-based, converting to tarball format..."
-            julia -e 'using Pkg; Pkg.Registry.rm("General"); Pkg.Registry.add("General")'
-          else
-            echo "General registry is already in tarball format (or absent)."
-          fi
+        with:
+          cache-registries: 'false'
 
       - name: Add Registry
         uses: julia-actions/add-julia-registry@v2
