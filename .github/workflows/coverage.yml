@@ -26,7 +26,7 @@ jobs:
       coverage_julia_arch: ${{ steps.config.outputs.coverage_julia_arch }}
       coverage_lib_ext: ${{ steps.config.outputs.coverage_lib_ext }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Cache pip
         uses: actions/cache@v5
         with:
@@ -64,7 +64,7 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: dorny/paths-filter@v4
@@ -82,7 +82,7 @@ jobs:
       actions: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: build-native-wrapper
         uses: ./.github/actions/build-test
         with:
