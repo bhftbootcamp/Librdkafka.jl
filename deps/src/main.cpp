@@ -215,6 +215,13 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
     static std::mutex store_mutex;
     static std::atomic<int> next_id{1};
 
+    // Last asynchronous broker error seen per consumer id. librdkafka delivers
+    // errors such as GROUP_AUTHORIZATION_FAILED via the error callback while a
+    // synchronous subscribe() is blocking; we capture them here so the Julia
+    // side can surface the real cause instead of a generic "subscribe timed out".
+    static std::map<int, std::string> consumer_last_error;
+    static std::mutex error_mutex;
+
     (void)jlcxx::julia_type<std::vector<std::string>>();
     (void)jlcxx::julia_type<std::vector<int>>();
     (void)jlcxx::julia_type<std::vector<long long>>();
@@ -471,9 +478,22 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
         if (!props->contains("log_cb")) {
             props->put("log_cb", global_log_callback());
         }
+        // Reserve the consumer id up front so the error callback can record
+        // broker errors against this specific consumer.
+        const int id = next_id.fetch_add(1);
+        if (!props->contains("error_cb")) {
+            props->put("error_cb", kafka::clients::ErrorCallback(
+                [id](const kafka::Error& err) {
+                    {
+                        std::lock_guard<std::mutex> guard(error_mutex);
+                        consumer_last_error[id] = err.toString();
+                    }
+                    emit_log(3, __FILE__, __LINE__,
+                             ("consumer error: " + err.toString()).c_str());
+                }));
+        }
         try {
             auto consumer = std::make_shared<kafka::clients::consumer::KafkaConsumer>(*props);
-            const int id = next_id.fetch_add(1);
             {
                 std::lock_guard<std::mutex> guard(store_mutex);
                 consumer_store[id] = std::move(consumer);
@@ -512,6 +532,12 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             }
             consumer = it->second;
         }
+        // Drop any stale broker error so consumer_last_error reflects only what
+        // happens during this subscribe() call.
+        {
+            std::lock_guard<std::mutex> guard(error_mutex);
+            consumer_last_error.erase(consumer_id);
+        }
         try {
             consumer->subscribe(topics);
         } catch (const std::exception& e) {
@@ -522,6 +548,12 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             return false;
         }
         return true;
+    });
+
+    mod.method("consumer_last_error", [](int consumer_id) -> std::string {
+        std::lock_guard<std::mutex> guard(error_mutex);
+        auto it = consumer_last_error.find(consumer_id);
+        return it == consumer_last_error.end() ? std::string() : it->second;
     });
 
     mod.method("consumer_poll_raw", [](int consumer_id, int timeout_ms) -> std::vector<std::uint8_t> {
@@ -620,6 +652,10 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             }
             consumer = it->second;
             consumer_store.erase(it);
+        }
+        {
+            std::lock_guard<std::mutex> guard(error_mutex);
+            consumer_last_error.erase(consumer_id);
         }
         try {
             consumer->close();

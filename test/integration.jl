@@ -320,4 +320,30 @@
             close(c)
         end
     end
+
+    @testset "group subscribe succeeds and leaves no broker error" begin
+        topic = fresh_topic()
+        p = KafkaProducer(bootstrap)
+        try
+            produce(p, topic, 0, "k", "v")
+        finally
+            close(p)
+        end
+        c = KafkaConsumer(bootstrap;
+            group_id = "librdkafka-jl-test-$(run_id)-sub-$(time_ns())",
+            config = Dict(
+                AUTO_OFFSET_RESET => "earliest",
+                ENABLE_AUTO_COMMIT => "false",
+            ),
+        )
+        try
+            subscribe!(c, [topic])
+            # On a healthy subscribe the captured per-consumer broker error stays
+            # empty; on failure (e.g. GROUP_AUTHORIZATION_FAILED) it is surfaced
+            # through the error thrown by subscribe!.
+            @test isempty(Librdkafka._B.consumer_last_error(c.id))
+        finally
+            close(c)
+        end
+    end
 end

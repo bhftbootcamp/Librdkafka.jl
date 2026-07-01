@@ -76,7 +76,18 @@ function subscribe!(c::KafkaConsumer, topics::Vector{Topic})
     names = [t.name for t in topics]
     topics_set = _B.make_topics_set(names)
     ok = _B.consumer_subscribe(c.id, topics_set)
-    ok || _throw_error(:state, :consumer_subscribe, "Consumer handle is invalid (maybe closed).")
+    if !ok
+        _flush_native_logs!()
+        broker_err = ""
+        try
+            broker_err = _B.consumer_last_error(c.id)
+        catch
+        end
+        msg = isempty(broker_err) ?
+            "subscribe failed (consumer handle invalid, closed, or timed out)." :
+            "subscribe failed: $broker_err"
+        _throw_error(:state, :consumer_subscribe, msg)
+    end
     c.subscription_mode = :subscribe
     return c
 end

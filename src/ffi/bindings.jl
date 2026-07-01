@@ -25,7 +25,8 @@ export create_kafka_consumer,
     consumer_commit_record,
     consumer_seek_to_beginning,
     consumer_seek_to_end,
-    consumer_set_log_level
+    consumer_set_log_level,
+    consumer_last_error
 
 export logging_disable,
     logging_set_format,
@@ -86,6 +87,8 @@ consumer_seek_to_end(id::Integer, topic::AbstractString, partition::Integer) =
 
 consumer_set_log_level(id::Integer, level::Integer) =
     Native.consumer_set_log_level(Int(id), Int(level))
+
+consumer_last_error(id::Integer) = String(Native.consumer_last_error(Int(id)))
 
 logging_disable() = Native.logging_disable()
 logging_set_format(fmt::AbstractString) = Native.logging_set_format(String(fmt))
