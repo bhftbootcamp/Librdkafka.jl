@@ -78,11 +78,7 @@ function subscribe!(c::KafkaConsumer, topics::Vector{Topic})
     ok = _B.consumer_subscribe(c.id, topics_set)
     if !ok
         _flush_native_logs!()
-        broker_err = ""
-        try
-            broker_err = _B.consumer_last_error(c.id)
-        catch
-        end
+        broker_err = _B.consumer_last_error(c.id)
         msg = isempty(broker_err) ?
             "subscribe failed (consumer handle invalid, closed, or timed out)." :
             "subscribe failed: $broker_err"

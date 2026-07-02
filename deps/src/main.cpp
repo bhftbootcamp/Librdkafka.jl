@@ -475,24 +475,24 @@ JLCXX_MODULE define_julia_module(jlcxx::Module& mod)
             props = it->second;
             properties_store.erase(it);
         }
-        if (!props->contains("log_cb")) {
-            props->put("log_cb", global_log_callback());
-        }
         // Reserve the consumer id up front so the error callback can record
         // broker errors against this specific consumer.
         const int id = next_id.fetch_add(1);
-        if (!props->contains("error_cb")) {
-            props->put("error_cb", kafka::clients::ErrorCallback(
-                [id](const kafka::Error& err) {
-                    {
-                        std::lock_guard<std::mutex> guard(error_mutex);
-                        consumer_last_error[id] = err.toString();
-                    }
-                    emit_log(3, __FILE__, __LINE__,
-                             ("consumer error: " + err.toString()).c_str());
-                }));
-        }
         try {
+            if (!props->contains("log_cb")) {
+                props->put("log_cb", global_log_callback());
+            }
+            if (!props->contains("error_cb")) {
+                props->put("error_cb", kafka::clients::ErrorCallback(
+                    [id](const kafka::Error& err) {
+                        {
+                            std::lock_guard<std::mutex> guard(error_mutex);
+                            consumer_last_error[id] = err.toString();
+                        }
+                        emit_log(3, __FILE__, __LINE__,
+                                 ("consumer error: " + err.toString()).c_str());
+                    }));
+            }
             auto consumer = std::make_shared<kafka::clients::consumer::KafkaConsumer>(*props);
             {
                 std::lock_guard<std::mutex> guard(store_mutex);
