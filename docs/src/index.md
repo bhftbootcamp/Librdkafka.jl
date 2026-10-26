@@ -87,6 +87,7 @@ See the [Julia REPL help](https://docs.julialang.org/en/v1/stdlib/REPL/) (e.g. `
 Librdkafka.KafkaClientError
 Librdkafka.KafkaError
 Librdkafka.KafkaProducer
+Librdkafka.Partition
 Librdkafka.KafkaConsumer
 Librdkafka.KafkaHeaders
 Librdkafka.produce
@@ -117,6 +118,7 @@ Librdkafka.ENABLE_AUTO_COMMIT
 Librdkafka.RD_KAFKA_OFFSET_BEGINNING
 Librdkafka.RD_KAFKA_OFFSET_END
 Librdkafka.RD_KAFKA_OFFSET_INVALID
+Librdkafka.RD_KAFKA_PARTITION_UA
 Librdkafka.DEFAULT_LOG_FORMAT
 ```
 
