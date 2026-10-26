@@ -1,10 +1,16 @@
 build_matrix:
   julia: ["1.10", "1.11", "1.12"]
   platform:
+    # Linux assets are built inside a Debian bookworm container (glibc 2.36): a wrapper
+    # built on the ubuntu-24.04 runner itself links against glibc 2.38+ symbols and does
+    # not load on older distributions (Debian 12 and alike).
+    # glibc_max is asserted on the built library by the build-test action.
     - os: ubuntu-24.04
       arch: x64
       platform: linux-x86_64
       lib_ext: so
+      container: debian:bookworm
+      glibc_max: "2.36"
     - os: macos-15
       arch: arm64
       platform: macos-aarch64

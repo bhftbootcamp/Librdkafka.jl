@@ -142,6 +142,7 @@ jobs:
     if: ${{ needs.prepare_release.outputs.release_enabled == 'true' }}
     needs: [prepare_release, config]
     runs-on: ${{ matrix.platform.os }}
+    container: ${{ matrix.platform.container || '' }}
     timeout-minutes: 60
     permissions:
       actions: write
@@ -157,6 +158,7 @@ jobs:
           julia-version: ${{ matrix.julia }}
           julia-arch: ${{ matrix.platform.arch }}
           lib-ext: ${{ matrix.platform.lib_ext }}
+          max-glibc: ${{ matrix.platform.glibc_max || '' }}
           run-precompile: 'false'
           run-tests: 'true'
           package-asset: 'true'

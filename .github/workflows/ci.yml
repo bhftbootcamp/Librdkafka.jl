@@ -72,6 +72,7 @@ jobs:
     needs: [config, changes]
     if: ${{ needs.changes.outputs.relevant == 'true' }}
     runs-on: ${{ matrix.platform.os }}
+    container: ${{ matrix.platform.container || '' }}
     timeout-minutes: 60
     permissions:
       actions: write
@@ -87,6 +88,7 @@ jobs:
           julia-version: ${{ matrix.julia }}
           julia-arch: ${{ matrix.platform.arch }}
           lib-ext: ${{ matrix.platform.lib_ext }}
+          max-glibc: ${{ matrix.platform.glibc_max || '' }}
           run-precompile: 'true'
           run-tests: 'true'
 

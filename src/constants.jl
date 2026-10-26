@@ -49,6 +49,15 @@ Special offset value: seek to the end of a partition (`-1`).
 const RD_KAFKA_OFFSET_END = -1
 
 """
+    RD_KAFKA_PARTITION_UA::Int
+
+Unassigned partition (`-1`): the broker-side partitioner of librdkafka picks the partition
+from the message key (consistent hashing), so messages with the same key land in the same
+partition. Pass it as the `partition` of [`produce`](@ref).
+"""
+const RD_KAFKA_PARTITION_UA = -1
+
+"""
     RD_KAFKA_OFFSET_INVALID::Int
 
 Sentinel offset value indicating an invalid or unset offset (`-1001`).

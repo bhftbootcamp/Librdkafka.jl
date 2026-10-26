@@ -53,7 +53,7 @@ Library based on [modern-cpp-kafka](https://github.com/morganstanley/modern-cpp-
   </body>
 </html>
 
-Prebuilt binaries are published automatically for supported platforms. If you need to build the wrapper from source, run:
+Prebuilt binaries are published automatically for supported platforms. The Linux x86_64 binary is built on Debian bookworm and needs glibc 2.36 or newer (Debian 12, Ubuntu 24.04 and later). If you need to build the wrapper from source, run:
 ```
 cmake -S deps/src -B deps/src/build && cmake --build deps/src/build
 ```
