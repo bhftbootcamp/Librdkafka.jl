@@ -36,6 +36,10 @@ inputs:
     description: 'Run Pkg.test() (true|false)'
     required: false
     default: 'true'
+  max-glibc:
+    description: 'Linux only: fail if the built library needs a GLIBC version above this (e.g. 2.36); empty = no check'
+    required: false
+    default: ''
   package-asset:
     description: 'Create tar.gz and upload as artifact (true|false)'
     required: false
@@ -60,6 +64,23 @@ outputs:
 runs:
   using: composite
   steps:
+    # The job may run inside a bare container (see workflow-config.yml, platform.container):
+    # the toolchain the runner image normally provides has to be installed first.
+    - name: Install build toolchain (Debian container)
+      if: ${{ runner.os == 'Linux' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v cmake >/dev/null && command -v g++ >/dev/null && command -v objdump >/dev/null; then
+          echo "toolchain present"; exit 0
+        fi
+        if ! command -v apt-get >/dev/null; then
+          echo "ERROR: cmake/g++ missing and apt-get unavailable"; exit 1
+        fi
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends \
+          build-essential cmake git curl ca-certificates tar gzip xz-utils pkg-config binutils
     - uses: julia-actions/setup-julia@v2
       with:
         version: ${{ inputs.julia-version }}
@@ -102,6 +123,18 @@ runs:
 
         cp "$libpath" "${{ inputs.stage-dir }}/"
         echo "libkafka_path=$libpath" >> "$GITHUB_OUTPUT"
+    - name: Check GLIBC requirement of the built library
+      if: ${{ runner.os == 'Linux' && inputs.max-glibc != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        lib="${{ steps.stage.outputs.libkafka_path }}"
+        need="$(objdump -T "$lib" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -t. -k1,1n -k2,2n -k3,3n | uniq | tail -1)"
+        echo "libkafka.so needs GLIBC_${need}, allowed up to ${{ inputs.max-glibc }}"
+        if [[ "$(printf '%s\n%s\n' "$need" "${{ inputs.max-glibc }}" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" != "${{ inputs.max-glibc }}" ]]; then
+          echo "ERROR: the library requires GLIBC_${need}, newer than ${{ inputs.max-glibc }} — build it in the bookworm container (workflow-config.yml)"
+          exit 1
+        fi
 
     - name: Precompile project
       if: ${{ inputs.run-precompile == 'true' }}

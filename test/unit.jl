@@ -18,7 +18,8 @@
     @testset "Partition" begin
         p = Librdkafka.Partition(0)
         @test p.id == 0
-        @test_throws DomainError Librdkafka.Partition(-1)
+        @test Librdkafka.Partition(Librdkafka.RD_KAFKA_PARTITION_UA).id == -1   # partition by key
+        @test_throws DomainError Librdkafka.Partition(-2)
     end
 
     @testset "TopicPartition" begin

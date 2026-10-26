@@ -7,7 +7,8 @@ export BOOTSTRAP_SERVERS,
     ENABLE_AUTO_COMMIT,
     RD_KAFKA_OFFSET_INVALID,
     RD_KAFKA_OFFSET_BEGINNING,
-    RD_KAFKA_OFFSET_END
+    RD_KAFKA_OFFSET_END,
+    RD_KAFKA_PARTITION_UA
 
 export KafkaProducer, KafkaConsumer
 export Topic, Partition, TopicPartition, Assignment, ConsumerRecord, KafkaHeaders
@@ -37,11 +38,17 @@ end
 Base.print(io::IO, t::Topic) = print(io, t.name)
 Base.show(io::IO, t::Topic) = print(io, "Topic(\"", t.name, "\")")
 
+"""
+    Partition(id)
+
+A partition id. Non-negative ids address a partition explicitly; `RD_KAFKA_PARTITION_UA`
+(`-1`) leaves the choice to the librdkafka partitioner (by message key).
+"""
 struct Partition
     id::Int
     function Partition(id::Integer)
         i = Int(id)
-        i < 0 && throw(DomainError(i, "Partition id must be non-negative."))
+        i < RD_KAFKA_PARTITION_UA && throw(DomainError(i, "Partition id must be non-negative or RD_KAFKA_PARTITION_UA (-1)."))
         i > typemax(Int32) && throw(DomainError(i, "Partition id exceeds Int32 range."))
         new(i)
     end
